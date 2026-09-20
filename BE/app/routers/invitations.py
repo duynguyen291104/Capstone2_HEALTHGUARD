@@ -7,7 +7,7 @@ from sqlalchemy.orm import selectinload
 from app.audit import add_audit
 from app.dependencies import CurrentUser, DbSession
 from app.errors import AppError
-from app.models import CareGroupMember, Invitation
+from app.models import CareGroupMember, Invitation, User
 from app.schemas import InvitationPublic, MessageOut
 from app.security import hash_invitation_token
 
@@ -63,14 +63,19 @@ async def accept_invitation(
         raise AppError(410, "INVITATION_EXPIRED", "Lời mời đã hết hạn")
     if invitation.email != user.email:
         raise AppError(403, "INVITATION_EMAIL_MISMATCH", "Email không khớp với lời mời")
+    # Competes safely with POST /care-groups for the same account.
+    await db.scalar(select(User.id).where(User.id == user.id).with_for_update())
     existing = await db.scalar(
-        select(CareGroupMember.id).where(
-            CareGroupMember.group_id == invitation.group_id,
-            CareGroupMember.user_id == user.id,
-        )
+        select(CareGroupMember).where(CareGroupMember.user_id == user.id)
     )
     if existing:
-        raise AppError(409, "ALREADY_A_MEMBER", "Bạn đã thuộc nhóm chăm sóc này")
+        code = "ALREADY_A_MEMBER" if existing.group_id == invitation.group_id else "GROUP_ALREADY_EXISTS"
+        message = (
+            "Bạn đã thuộc nhóm chăm sóc này"
+            if existing.group_id == invitation.group_id
+            else "Tài khoản đã thuộc một nhóm chăm sóc khác"
+        )
+        raise AppError(409, code, message)
     db.add(
         CareGroupMember(
             group_id=invitation.group_id,

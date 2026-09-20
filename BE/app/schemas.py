@@ -6,25 +6,43 @@ from decimal import Decimal
 from typing import Annotated
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    EmailStr,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
 from app.models import DoseResponseType, DoseStatus, GroupRole, MobilityLevel, Sex
 
 
-Name = Annotated[str, Field(min_length=1, max_length=150)]
+Name = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=150),
+]
 Password = Annotated[str, Field(min_length=10, max_length=128)]
+MedicationName = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=200),
+]
+DoseUnit = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=50),
+]
 
 
 class ORMModel(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class OwnerRegister(BaseModel):
+class AccountRegister(BaseModel):
     full_name: Name
     email: EmailStr
     password: Password
     phone: str | None = Field(default=None, max_length=30)
-    care_group_name: Name
 
 
 class CaregiverRegister(BaseModel):
@@ -63,6 +81,10 @@ class GroupSummary(ORMModel):
     role: GroupRole
 
 
+class CareGroupCreate(BaseModel):
+    name: Name
+
+
 class AuthOut(BaseModel):
     user: UserOut
     groups: list[GroupSummary]
@@ -79,6 +101,7 @@ class MemberOut(BaseModel):
     email: EmailStr
     role: GroupRole
     joined_at: datetime
+    telegram_linked: bool = False
 
 
 class InvitationCreate(BaseModel):
@@ -147,6 +170,16 @@ class ElderUpdate(BaseModel):
     emergency_contact_phone: str | None = Field(default=None, max_length=30)
     is_active: bool | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def reject_null_for_required_fields(cls, value: object) -> object:
+        if isinstance(value, dict):
+            required = {"full_name", "sex", "diagnosed_conditions", "is_active"}
+            invalid = sorted(field for field in required if field in value and value[field] is None)
+            if invalid:
+                raise ValueError(f"These fields cannot be null: {', '.join(invalid)}")
+        return value
+
     @field_validator("diagnosed_conditions")
     @classmethod
     def clean_conditions(cls, value: list[str] | None) -> list[str] | None:
@@ -168,6 +201,9 @@ class ElderOut(ORMModel):
     emergency_contact_name: str | None
     emergency_contact_phone: str | None
     is_active: bool
+    can_view_medications: bool
+    can_confirm_doses: bool
+    can_view_diagnoses: bool
     created_at: datetime
     updated_at: datetime
 
@@ -176,6 +212,12 @@ class AssignmentUpsert(BaseModel):
     can_view_medications: bool = True
     can_confirm_doses: bool = True
     can_view_diagnoses: bool = False
+
+    @model_validator(mode="after")
+    def confirmation_requires_medication_access(self) -> AssignmentUpsert:
+        if self.can_confirm_doses and not self.can_view_medications:
+            raise ValueError("can_confirm_doses requires can_view_medications")
+        return self
 
 
 class AssignmentOut(ORMModel):
@@ -188,9 +230,9 @@ class AssignmentOut(ORMModel):
 
 
 class ScheduleCreate(BaseModel):
-    medication_name: str = Field(min_length=1, max_length=200)
+    medication_name: MedicationName
     dose_amount: Decimal = Field(gt=0, max_digits=8, decimal_places=2)
-    dose_unit: str = Field(min_length=1, max_length=50)
+    dose_unit: DoseUnit
     instructions: str | None = Field(default=None, max_length=3000)
     start_date: date
     end_date: date | None = None
@@ -237,9 +279,11 @@ class ScheduleCreate(BaseModel):
 
 
 class ScheduleUpdate(BaseModel):
-    medication_name: str | None = Field(default=None, min_length=1, max_length=200)
+    model_config = ConfigDict(extra="forbid")
+
+    medication_name: MedicationName | None = None
     dose_amount: Decimal | None = Field(default=None, gt=0, max_digits=8, decimal_places=2)
-    dose_unit: str | None = Field(default=None, min_length=1, max_length=50)
+    dose_unit: DoseUnit | None = None
     instructions: str | None = Field(default=None, max_length=3000)
     end_date: date | None = None
     time_of_day: time | None = None
@@ -248,7 +292,25 @@ class ScheduleUpdate(BaseModel):
     reminder_offsets_minutes: list[int] | None = None
     escalation_after_minutes: int | None = Field(default=None, ge=1, le=1440)
     assigned_caregiver_user_id: uuid.UUID | None = None
-    is_active: bool | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_null_for_required_fields(cls, value: object) -> object:
+        if isinstance(value, dict):
+            required = {
+                "medication_name",
+                "dose_amount",
+                "dose_unit",
+                "time_of_day",
+                "days_of_week",
+                "timezone",
+                "reminder_offsets_minutes",
+                "escalation_after_minutes",
+            }
+            invalid = sorted(field for field in required if field in value and value[field] is None)
+            if invalid:
+                raise ValueError(f"These fields cannot be null: {', '.join(invalid)}")
+        return value
 
     @field_validator("days_of_week")
     @classmethod
@@ -324,4 +386,5 @@ class DoseOccurrenceOut(BaseModel):
     scheduled_for: datetime
     status: DoseStatus
     reminder_count: int
+    can_respond: bool
     response: DoseResponseOut | None

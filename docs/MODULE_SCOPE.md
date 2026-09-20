@@ -32,7 +32,7 @@ Giao diện tối thiểu vẫn cần các trang vận hành: đăng ký/đăng 
 - Module nhắc thuốc sở hữu `caregiver_assignments`, `invitations`, `medication_schedules`, `dose_occurrences`, `dose_responses`, `notification_attempts` và `audit_logs`.
 - Module AI té ngã tham chiếu `elder_profiles.id`; không sao chép một hồ sơ người cao tuổi khác.
 - `OWNER` và `CAREGIVER` là vai trò của ứng dụng trong `care_group_members`, không phải PostgreSQL role.
-- Một người dùng có thể có vai trò khác nhau ở các nhóm chăm sóc khác nhau. Mọi truy vấn phải kiểm tra `care_group_id` và membership hiện tại.
+- Trong phạm vi hiện tại, mỗi tài khoản chỉ thuộc một nhóm chăm sóc. Tài khoản tự tạo nhóm trở thành `OWNER`; tài khoản nhận lời mời trở thành `CAREGIVER`. Mọi truy vấn vẫn phải kiểm tra `care_group_id` và membership hiện tại.
 
 ## 3. Hợp đồng API giữa FE và BE
 
@@ -58,20 +58,19 @@ Quy ước chung:
 
 | Method | Endpoint | Quyền | Mục đích |
 |---|---|---|---|
-| `POST` | `/auth/register-owner` | Public | Tạo tài khoản chủ nhà và nhóm chăm sóc đầu tiên trong một transaction |
+| `POST` | `/auth/register` | Public | Tạo tài khoản và phiên đăng nhập; chưa gán vai trò hoặc nhóm |
 | `POST` | `/auth/register-caregiver` | Public + invitation token | Tạo tài khoản người chăm sóc từ lời mời còn hiệu lực |
 | `POST` | `/auth/login` | Public | Xác thực và đặt cookie phiên |
 | `POST` | `/auth/logout` | Logged in | Xóa cookie phiên |
 | `GET` | `/auth/me` | Logged in | Trả người dùng, nhóm hiện tại và vai trò |
 
-Payload tối thiểu khi đăng ký chủ nhà:
+Payload tối thiểu khi đăng ký tài khoản:
 
 ```json
 {
   "full_name": "Nguyen Van An",
   "email": "an@example.com",
-  "password": "a-strong-password",
-  "care_group_name": "Gia dinh anh An"
+  "password": "a-strong-password"
 }
 ```
 
@@ -79,6 +78,7 @@ Payload tối thiểu khi đăng ký chủ nhà:
 
 | Method | Endpoint | Quyền | Mục đích |
 |---|---|---|---|
+| `POST` | `/care-groups` | Logged in, chưa thuộc nhóm | Tạo nhóm và gán tài khoản hiện tại làm `OWNER` |
 | `GET` | `/care-groups/current/members` | OWNER | Danh sách thành viên của nhóm hiện tại |
 | `POST` | `/care-groups/current/invitations` | OWNER | Tạo lời mời có hạn dùng và gắn đúng email |
 | `GET` | `/invitations/{token}` | Public | Kiểm tra lời mời để hiện trang đăng ký |
@@ -155,7 +155,7 @@ Không commit `.env`. Nếu thêm `compose.yaml`, đổi cổng host khi `5432` 
 
 ### Auth và phân quyền
 
-1. Đăng ký OWNER tạo `user`, `care_group` và membership `OWNER` nguyên tử; lỗi ở một bước phải rollback toàn bộ.
+1. Đăng ký tạo `user` và phiên nguyên tử. Tạo nhóm là bước riêng, tạo `care_group` và membership `OWNER` nguyên tử; lỗi ở một bước phải rollback toàn bộ.
 2. Email sau khi chuẩn hóa là duy nhất; password chỉ lưu dưới dạng Argon2 hash.
 3. Đăng nhập sai email và sai mật khẩu trả cùng một thông báo chung.
 4. Đăng xuất làm phiên không còn dùng được; endpoint bảo vệ trả `401` khi chưa đăng nhập.

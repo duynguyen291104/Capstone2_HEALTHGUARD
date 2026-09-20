@@ -81,7 +81,7 @@ function ElderForm({ elder, onSaved, onClose }: { elder?: Elder | null; onSaved:
     const body = {
       full_name: values.full_name.trim(),
       date_of_birth: nullable(values.date_of_birth),
-      sex: nullable(values.sex),
+      sex: values.sex || "UNDISCLOSED",
       height_cm: nullableNumber(values.height_cm),
       weight_kg: nullableNumber(values.weight_kg),
       diagnosed_conditions: values.diagnosed_conditions.split(/[,\n]/).map((item) => item.trim()).filter(Boolean),
@@ -115,7 +115,7 @@ function ElderForm({ elder, onSaved, onClose }: { elder?: Elder | null; onSaved:
       <SelectField label="Khả năng đi lại" value={values.mobility_level} onChange={(event) => update("mobility_level", event.target.value)}>
         <option value="">Chưa khai báo</option>
         <option value="INDEPENDENT">Tự đi lại</option>
-        <option value="ASSISTED">Cần người hỗ trợ</option>
+        <option value="NEEDS_ASSISTANCE">Cần người hỗ trợ</option>
         <option value="WHEELCHAIR">Dùng xe lăn</option>
         <option value="BEDRIDDEN">Nằm tại giường</option>
       </SelectField>
@@ -142,7 +142,7 @@ export function EldersPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [editing, setEditing] = useState<Elder | "new" | null>(null);
-  const isOwner = user?.current_group.role === "OWNER";
+  const isOwner = user?.current_group?.role === "OWNER";
 
   useEffect(() => {
     let active = true;

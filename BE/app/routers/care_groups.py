@@ -19,14 +19,51 @@ from app.models import (
     MedicationSchedule,
     User,
 )
-from app.schemas import InvitationCreate, InvitationCreated, InvitationOut, MemberOut
+from app.schemas import (
+    CareGroupCreate,
+    GroupSummary,
+    InvitationCreate,
+    InvitationCreated,
+    InvitationOut,
+    MemberOut,
+)
 from app.security import generate_invitation_token, hash_invitation_token
 
 
-router = APIRouter(prefix="/care-groups/current", tags=["care-groups"])
+router = APIRouter(prefix="/care-groups", tags=["care-groups"])
 
 
-@router.get("/members", response_model=list[MemberOut])
+@router.post("", response_model=GroupSummary, status_code=status.HTTP_201_CREATED)
+async def create_care_group(
+    payload: CareGroupCreate,
+    user: CurrentUser,
+    db: DbSession,
+) -> GroupSummary:
+    # Serialize group creation and invitation acceptance for the same account.
+    # The current scope permits one care group per account.
+    await db.scalar(select(User.id).where(User.id == user.id).with_for_update())
+    existing_membership = await db.scalar(
+        select(CareGroupMember.id).where(CareGroupMember.user_id == user.id)
+    )
+    if existing_membership:
+        raise AppError(409, "GROUP_ALREADY_EXISTS", "Tài khoản đã thuộc một nhóm chăm sóc")
+    group = CareGroup(name=payload.name, created_by_user_id=user.id)
+    db.add(group)
+    await db.flush()
+    db.add(CareGroupMember(group_id=group.id, user_id=user.id, role=GroupRole.OWNER))
+    add_audit(
+        db,
+        group_id=group.id,
+        actor_user_id=user.id,
+        action="CARE_GROUP_CREATED",
+        entity_type="care_group",
+        entity_id=group.id,
+    )
+    await db.commit()
+    return GroupSummary(id=group.id, name=group.name, role=GroupRole.OWNER)
+
+
+@router.get("/current/members", response_model=list[MemberOut])
 async def list_members(context: OwnerCtx, db: DbSession) -> list[MemberOut]:
     rows = (
         await db.execute(
@@ -43,12 +80,15 @@ async def list_members(context: OwnerCtx, db: DbSession) -> list[MemberOut]:
             email=user.email,
             role=member.role,
             joined_at=member.joined_at,
+            telegram_linked=bool(user.telegram_chat_id),
         )
         for member, user in rows
     ]
 
 
-@router.post("/invitations", response_model=InvitationCreated, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/current/invitations", response_model=InvitationCreated, status_code=status.HTTP_201_CREATED
+)
 async def create_invitation(
     payload: InvitationCreate,
     context: OwnerCtx,
@@ -109,7 +149,7 @@ async def create_invitation(
     )
 
 
-@router.get("/invitations", response_model=list[InvitationOut])
+@router.get("/current/invitations", response_model=list[InvitationOut])
 async def list_invitations(context: OwnerCtx, db: DbSession) -> list[Invitation]:
     return list(
         (
@@ -122,7 +162,9 @@ async def list_invitations(context: OwnerCtx, db: DbSession) -> list[Invitation]
     )
 
 
-@router.delete("/invitations/{invitation_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/current/invitations/{invitation_id}", status_code=status.HTTP_204_NO_CONTENT
+)
 async def revoke_invitation(
     invitation_id: uuid.UUID,
     context: OwnerCtx,
@@ -153,7 +195,7 @@ async def revoke_invitation(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.delete("/members/{member_user_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/current/members/{member_user_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def remove_member(
     member_user_id: uuid.UUID,
     context: OwnerCtx,

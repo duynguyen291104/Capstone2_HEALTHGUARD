@@ -1,5 +1,27 @@
 import { CircleAlert, Inbox, LoaderCircle, X } from "lucide-react";
-import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode } from "react";
+import {
+  useEffect,
+  useId,
+  useRef,
+  type ButtonHTMLAttributes,
+  type InputHTMLAttributes,
+  type ReactNode,
+} from "react";
+
+const focusableSelector = [
+  "a[href]",
+  "button:not([disabled])",
+  "input:not([disabled]):not([type='hidden'])",
+  "select:not([disabled])",
+  "textarea:not([disabled])",
+  "[tabindex]:not([tabindex='-1'])",
+].join(",");
+
+function getFocusableElements(container: HTMLElement) {
+  return Array.from(container.querySelectorAll<HTMLElement>(focusableSelector)).filter(
+    (element) => element.getClientRects().length > 0 && element.getAttribute("aria-hidden") !== "true",
+  );
+}
 
 type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: "primary" | "secondary" | "danger" | "ghost";
@@ -157,19 +179,92 @@ export function Modal({
   onClose: () => void;
   children: ReactNode;
 }) {
+  const modalRef = useRef<HTMLElement>(null);
+  const onCloseRef = useRef(onClose);
+  const titleId = useId();
+  const descriptionId = useId();
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
+  useEffect(() => {
+    const modal = modalRef.current;
+    const previouslyFocused = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    let focusFrame = 0;
+
+    if (modal) {
+      focusFrame = window.requestAnimationFrame(() => {
+        const preferredTarget = modal.querySelector<HTMLElement>(
+          "[data-modal-initial-focus], [autofocus], .modal__body input:not([disabled]):not([type='hidden']), .modal__body select:not([disabled]), .modal__body textarea:not([disabled])",
+        );
+        preferredTarget?.focus();
+
+        if (!preferredTarget) {
+          (getFocusableElements(modal)[0] ?? modal).focus();
+        }
+      });
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      const currentModal = modalRef.current;
+      if (!currentModal) return;
+
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onCloseRef.current();
+        return;
+      }
+
+      if (event.key !== "Tab") return;
+
+      const focusableElements = getFocusableElements(currentModal);
+      if (focusableElements.length === 0) {
+        event.preventDefault();
+        currentModal.focus();
+        return;
+      }
+
+      const firstElement = focusableElements[0];
+      const lastElement = focusableElements[focusableElements.length - 1];
+      const activeElement = document.activeElement;
+
+      if (event.shiftKey && (activeElement === firstElement || !currentModal.contains(activeElement))) {
+        event.preventDefault();
+        lastElement.focus();
+      } else if (!event.shiftKey && (activeElement === lastElement || !currentModal.contains(activeElement))) {
+        event.preventDefault();
+        firstElement.focus();
+      }
+    }
+
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      document.removeEventListener("keydown", handleKeyDown);
+      if (previouslyFocused?.isConnected) previouslyFocused.focus();
+    };
+  }, []);
+
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
       <section
+        ref={modalRef}
         className="modal"
         role="dialog"
         aria-modal="true"
-        aria-labelledby="modal-title"
+        aria-labelledby={titleId}
+        aria-describedby={description ? descriptionId : undefined}
+        tabIndex={-1}
         onMouseDown={(event) => event.stopPropagation()}
       >
         <header className="modal__header">
           <div>
-            <h2 id="modal-title">{title}</h2>
-            {description ? <p>{description}</p> : null}
+            <h2 id={titleId}>{title}</h2>
+            {description ? <p id={descriptionId}>{description}</p> : null}
           </div>
           <button className="icon-button" type="button" onClick={onClose} aria-label="Đóng">
             <X size={20} aria-hidden="true" />
@@ -190,4 +285,3 @@ export function SkeletonList({ rows = 3 }: { rows?: number }) {
     </div>
   );
 }
-

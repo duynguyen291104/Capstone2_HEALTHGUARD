@@ -2,7 +2,7 @@ import uuid
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Response, status
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.orm import selectinload
 
 from app.audit import add_audit
@@ -17,6 +17,7 @@ from app.models import (
     GroupRole,
     Medication,
     MedicationSchedule,
+    NotificationAttempt,
 )
 from app.schemas import ScheduleCreate, ScheduleOut, ScheduleUpdate
 
@@ -64,6 +65,7 @@ async def validate_assigned_caregiver(
         .where(
             CaregiverAssignment.elder_id == elder_id,
             CaregiverAssignment.caregiver_user_id == caregiver_user_id,
+            CaregiverAssignment.can_view_medications.is_(True),
             CaregiverAssignment.can_confirm_doses.is_(True),
             CareGroupMember.group_id == group_id,
             CareGroupMember.role == GroupRole.CAREGIVER,
@@ -179,6 +181,10 @@ async def update_schedule(
     schedule = await get_schedule_for_group(schedule_id, context.group_id, db)
     medication = schedule.medication
     values = payload.model_dump(exclude_unset=True)
+    if not values:
+        return schedule_out(schedule)
+    if not schedule.is_active or not medication.is_active:
+        raise AppError(409, "SCHEDULE_INACTIVE", "Lịch đã ngừng và không thể chỉnh sửa")
     if "assigned_caregiver_user_id" in values:
         await validate_assigned_caregiver(
             db,
@@ -187,39 +193,65 @@ async def update_schedule(
             caregiver_user_id=values["assigned_caregiver_user_id"],
         )
 
-    medication_fields = {
-        "medication_name": "name",
-        "dose_amount": "dose_amount",
-        "dose_unit": "dose_unit",
-        "instructions": "instructions",
-        "end_date": "end_date",
+    medication_values = {
+        "elder_id": medication.elder_id,
+        "name": values.get("medication_name", medication.name),
+        "dose_amount": values.get("dose_amount", medication.dose_amount),
+        "dose_unit": values.get("dose_unit", medication.dose_unit),
+        "instructions": values.get("instructions", medication.instructions),
+        "start_date": medication.start_date,
+        "end_date": values.get("end_date", medication.end_date),
+        "created_by_user_id": user.id,
     }
-    schedule_fields = {
-        "time_of_day",
-        "days_of_week",
-        "timezone",
-        "reminder_offsets_minutes",
-        "escalation_after_minutes",
-        "assigned_caregiver_user_id",
-        "is_active",
+    schedule_values = {
+        "time_of_day": values.get("time_of_day", schedule.time_of_day),
+        "days_of_week": values.get("days_of_week", schedule.days_of_week),
+        "timezone": values.get("timezone", schedule.timezone),
+        "reminder_offsets_minutes": values.get(
+            "reminder_offsets_minutes", schedule.reminder_offsets_minutes
+        ),
+        "escalation_after_minutes": values.get(
+            "escalation_after_minutes", schedule.escalation_after_minutes
+        ),
+        "assigned_caregiver_user_id": values.get(
+            "assigned_caregiver_user_id", schedule.assigned_caregiver_user_id
+        ),
     }
-    for source, target in medication_fields.items():
-        if source in values:
-            setattr(medication, target, values[source])
-    for field in schedule_fields:
-        if field in values:
-            setattr(schedule, field, values[field])
-    if schedule.escalation_after_minutes <= schedule.reminder_offsets_minutes[-1]:
+    if (
+        schedule_values["escalation_after_minutes"]
+        <= schedule_values["reminder_offsets_minutes"][-1]
+    ):
         raise AppError(422, "INVALID_REMINDER_TIMING", "Cảnh báo phải sau lần nhắc cuối")
+    if (
+        medication_values["end_date"]
+        and medication_values["end_date"] < medication_values["start_date"]
+    ):
+        raise AppError(422, "INVALID_DATE_RANGE", "Ngày kết thúc không được trước ngày bắt đầu")
 
+    # Version the schedule so historic occurrences retain the exact medicine
+    # name, dose and instructions that applied when they were created.
+    replacement_medication = Medication(**medication_values)
+    db.add(replacement_medication)
+    await db.flush()
+    replacement_schedule = MedicationSchedule(
+        medication_id=replacement_medication.id,
+        **schedule_values,
+    )
+    db.add(replacement_schedule)
+    await db.flush()
+    replacement_schedule.medication = replacement_medication
+    schedule.is_active = False
+    medication.is_active = False
+
+    # Future occurrences are derived data. Remove them so the worker creates
+    # the replacement schedule at the correct future times.
     await db.execute(
-        update(DoseOccurrence)
+        delete(DoseOccurrence)
         .where(
             DoseOccurrence.schedule_id == schedule.id,
             DoseOccurrence.scheduled_for > datetime.now(UTC),
             DoseOccurrence.status.in_([DoseStatus.SCHEDULED, DoseStatus.DUE]),
         )
-        .values(status=DoseStatus.CANCELLED, next_action_at=None)
     )
     add_audit(
         db,
@@ -227,13 +259,14 @@ async def update_schedule(
         actor_user_id=user.id,
         action="MEDICATION_SCHEDULE_UPDATED",
         entity_type="medication_schedule",
-        entity_id=schedule.id,
-        details={"changed_fields": sorted(values)},
+        entity_id=replacement_schedule.id,
+        details={
+            "previous_schedule_id": str(schedule.id),
+            "changed_fields": sorted(values),
+        },
     )
     await db.commit()
-    await db.refresh(schedule)
-    schedule.medication = medication
-    return schedule_out(schedule)
+    return schedule_out(replacement_schedule)
 
 
 @router.delete("/medication-schedules/{schedule_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -248,11 +281,26 @@ async def stop_schedule(
     schedule = await get_schedule_for_group(schedule_id, context.group_id, db)
     schedule.is_active = False
     schedule.medication.is_active = False
+    occurrence_ids = select(DoseOccurrence.id).where(
+        DoseOccurrence.schedule_id == schedule.id,
+        DoseOccurrence.status.in_([DoseStatus.SCHEDULED, DoseStatus.DUE]),
+    )
+    await db.execute(
+        update(NotificationAttempt)
+        .where(
+            NotificationAttempt.occurrence_id.in_(occurrence_ids),
+            NotificationAttempt.delivered.is_(False),
+        )
+        .values(
+            delivery_attempt_count=3,
+            next_attempt_at=None,
+            error="Medication schedule stopped",
+        )
+    )
     await db.execute(
         update(DoseOccurrence)
         .where(
             DoseOccurrence.schedule_id == schedule.id,
-            DoseOccurrence.scheduled_for > datetime.now(UTC),
             DoseOccurrence.status.in_([DoseStatus.SCHEDULED, DoseStatus.DUE]),
         )
         .values(status=DoseStatus.CANCELLED, next_action_at=None)
@@ -267,4 +315,3 @@ async def stop_schedule(
     )
     await db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
-

@@ -30,7 +30,7 @@ export default function LandingPage() {
           </p>
           <div className="hero__actions">
             <Link className="button button--primary button--large" href="/dang-ky">
-              Tạo nhóm chăm sóc <ArrowRight size={18} aria-hidden="true" />
+              Tạo tài khoản <ArrowRight size={18} aria-hidden="true" />
             </Link>
             <Link className="text-link" href="/dang-nhap">Tôi đã có tài khoản</Link>
           </div>
@@ -94,4 +94,3 @@ export default function LandingPage() {
     </main>
   );
 }
-

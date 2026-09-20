@@ -15,10 +15,13 @@ from app.errors import AppError, not_found
 from app.models import (
     CareGroupMember,
     CaregiverAssignment,
+    DoseOccurrence,
+    DoseStatus,
     ElderProfile,
     GroupRole,
     Medication,
     MedicationSchedule,
+    NotificationAttempt,
 )
 from app.schemas import AssignmentOut, AssignmentUpsert, ElderCreate, ElderOut, ElderUpdate
 
@@ -26,7 +29,13 @@ from app.schemas import AssignmentOut, AssignmentUpsert, ElderCreate, ElderOut, 
 router = APIRouter(prefix="/elders", tags=["elders"])
 
 
-def elder_out(elder: ElderProfile, *, can_view_diagnoses: bool) -> ElderOut:
+def elder_out(
+    elder: ElderProfile,
+    *,
+    can_view_medications: bool,
+    can_confirm_doses: bool,
+    can_view_diagnoses: bool,
+) -> ElderOut:
     return ElderOut(
         id=elder.id,
         group_id=elder.group_id,
@@ -42,6 +51,9 @@ def elder_out(elder: ElderProfile, *, can_view_diagnoses: bool) -> ElderOut:
         emergency_contact_name=elder.emergency_contact_name,
         emergency_contact_phone=elder.emergency_contact_phone,
         is_active=elder.is_active,
+        can_view_medications=can_view_medications,
+        can_confirm_doses=can_confirm_doses,
+        can_view_diagnoses=can_view_diagnoses,
         created_at=elder.created_at,
         updated_at=elder.updated_at,
     )
@@ -61,7 +73,15 @@ async def list_elders(
                 .order_by(ElderProfile.created_at)
             )
         ).all()
-        return [elder_out(item, can_view_diagnoses=True) for item in elders]
+        return [
+            elder_out(
+                item,
+                can_view_medications=True,
+                can_confirm_doses=True,
+                can_view_diagnoses=True,
+            )
+            for item in elders
+        ]
 
     rows = (
         await db.execute(
@@ -75,7 +95,12 @@ async def list_elders(
         )
     ).all()
     return [
-        elder_out(elder, can_view_diagnoses=assignment.can_view_diagnoses)
+        elder_out(
+            elder,
+            can_view_medications=assignment.can_view_medications,
+            can_confirm_doses=assignment.can_confirm_doses,
+            can_view_diagnoses=assignment.can_view_diagnoses,
+        )
         for elder, assignment in rows
     ]
 
@@ -113,13 +138,25 @@ async def create_elder(
     )
     await db.commit()
     await db.refresh(elder)
-    return elder_out(elder, can_view_diagnoses=True)
+    return elder_out(
+        elder,
+        can_view_medications=True,
+        can_confirm_doses=True,
+        can_view_diagnoses=True,
+    )
 
 
 @router.get("/{elder_id}", response_model=ElderOut)
 async def get_elder(access: ElderAccessDep) -> ElderOut:
     can_view = access.is_owner or bool(access.assignment and access.assignment.can_view_diagnoses)
-    return elder_out(access.elder, can_view_diagnoses=can_view)
+    return elder_out(
+        access.elder,
+        can_view_medications=access.is_owner
+        or bool(access.assignment and access.assignment.can_view_medications),
+        can_confirm_doses=access.is_owner
+        or bool(access.assignment and access.assignment.can_confirm_doses),
+        can_view_diagnoses=can_view,
+    )
 
 
 @router.patch("/{elder_id}", response_model=ElderOut)
@@ -136,6 +173,32 @@ async def update_elder(
         values["diagnoses"] = values.pop("diagnosed_conditions")
     for field, value in values.items():
         setattr(access.elder, field, value)
+    if values.get("is_active") is False:
+        medication_ids = select(Medication.id).where(Medication.elder_id == access.elder.id)
+        schedule_ids = select(MedicationSchedule.id).where(
+            MedicationSchedule.medication_id.in_(medication_ids)
+        )
+        occurrence_ids = select(DoseOccurrence.id).where(
+            DoseOccurrence.schedule_id.in_(schedule_ids),
+            DoseOccurrence.status.in_([DoseStatus.SCHEDULED, DoseStatus.DUE]),
+        )
+        await db.execute(
+            update(NotificationAttempt)
+            .where(
+                NotificationAttempt.occurrence_id.in_(occurrence_ids),
+                NotificationAttempt.delivered.is_(False),
+            )
+            .values(
+                delivery_attempt_count=3,
+                next_attempt_at=None,
+                error="Elder profile deactivated",
+            )
+        )
+        await db.execute(
+            update(DoseOccurrence)
+            .where(DoseOccurrence.id.in_(occurrence_ids))
+            .values(status=DoseStatus.CANCELLED, next_action_at=None)
+        )
     add_audit(
         db,
         group_id=access.context.group_id,
@@ -147,7 +210,12 @@ async def update_elder(
     )
     await db.commit()
     await db.refresh(access.elder)
-    return elder_out(access.elder, can_view_diagnoses=True)
+    return elder_out(
+        access.elder,
+        can_view_medications=True,
+        can_confirm_doses=True,
+        can_view_diagnoses=True,
+    )
 
 
 @router.put("/{elder_id}/caregivers/{caregiver_user_id}", response_model=AssignmentOut)
@@ -185,6 +253,7 @@ async def assign_caregiver(
     assignment.can_view_medications = payload.can_view_medications
     assignment.can_confirm_doses = payload.can_confirm_doses
     assignment.can_view_diagnoses = payload.can_view_diagnoses
+    await db.flush()
     if not payload.can_confirm_doses:
         medication_ids = select(Medication.id).where(Medication.elder_id == access.elder.id)
         await db.execute(

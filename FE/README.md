@@ -28,15 +28,17 @@ Frontend gửi cookie phiên với `credentials: "include"` và tự gắn `X-Ca
 ## Các màn hình
 
 - `/`: trang giới thiệu.
-- `/dang-ky`: đăng ký tài khoản chủ gia đình và tạo nhóm đầu tiên.
+- `/dang-ky`: đăng ký tài khoản; chưa yêu cầu nhập tên nhóm.
 - `/dang-nhap`: đăng nhập.
-- `/tham-gia?token=...`: đăng ký người chăm sóc bằng lời mời.
+- `/tao-nhom`: tài khoản chưa thuộc nhóm tạo nhóm chăm sóc và trở thành chủ nhóm.
+- `/tham-gia?token=...`: tạo tài khoản người chăm sóc hoặc đăng nhập tài khoản chưa thuộc nhóm để nhận lời mời.
 - `/hom-nay`: các lần uống thuốc cần xử lý.
 - `/nguoi-duoc-cham-soc`: quản lý hồ sơ người cao tuổi.
 - `/nguoi-cham-soc`: mời, phân công và cấp quyền cho người chăm sóc.
-- `/lich-thuoc`: thiết lập và ngừng lịch thuốc.
+- `/lich-thuoc`: thiết lập, sửa và ngừng lịch thuốc.
+- `/thong-bao`: liên kết Telegram để nhận nhắc thuốc.
 
-Deep link từ Telegram dùng `/hom-nay?occurrence=<uuid>` để tự cuộn đến lần uống tương ứng.
+Deep link từ Telegram dùng `/hom-nay?date=YYYY-MM-DD&occurrence=<uuid>` để mở đúng ngày và tự cuộn đến lần uống tương ứng.
 
 ## Kiểm tra trước khi ghép nhánh
 
@@ -45,4 +47,3 @@ npm run lint
 npm run typecheck
 npm run build
 ```
-

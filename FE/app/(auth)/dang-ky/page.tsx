@@ -1,9 +1,8 @@
 import type { Metadata } from "next";
-import { OwnerRegisterForm } from "@/components/auth-forms";
+import { AccountRegisterForm } from "@/components/auth-forms";
 
-export const metadata: Metadata = { title: "Tạo nhóm chăm sóc" };
+export const metadata: Metadata = { title: "Tạo tài khoản" };
 
 export default function RegisterPage() {
-  return <OwnerRegisterForm />;
+  return <AccountRegisterForm />;
 }
-

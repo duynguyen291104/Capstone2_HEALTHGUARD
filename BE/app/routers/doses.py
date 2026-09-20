@@ -3,7 +3,7 @@ from datetime import UTC, date, datetime, time
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Query
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
@@ -21,6 +21,7 @@ from app.models import (
     GroupRole,
     Medication,
     MedicationSchedule,
+    NotificationAttempt,
 )
 from app.schemas import DoseOccurrenceOut, DoseResponseCreate, DoseResponseOut
 
@@ -28,7 +29,7 @@ from app.schemas import DoseOccurrenceOut, DoseResponseCreate, DoseResponseOut
 router = APIRouter(prefix="/dose-occurrences", tags=["dose-occurrences"])
 
 
-def occurrence_out(occurrence: DoseOccurrence) -> DoseOccurrenceOut:
+def occurrence_out(occurrence: DoseOccurrence, *, can_respond: bool) -> DoseOccurrenceOut:
     schedule = occurrence.schedule
     medication = schedule.medication
     elder = medication.elder
@@ -44,6 +45,7 @@ def occurrence_out(occurrence: DoseOccurrence) -> DoseOccurrenceOut:
         scheduled_for=occurrence.scheduled_for,
         status=occurrence.status,
         reminder_count=occurrence.reminder_count,
+        can_respond=can_respond,
         response=DoseResponseOut.model_validate(occurrence.response)
         if occurrence.response
         else None,
@@ -92,7 +94,34 @@ async def list_occurrences(
             CaregiverAssignment.can_view_medications.is_(True),
         )
     occurrences = (await db.scalars(statement.order_by(DoseOccurrence.scheduled_for))).unique().all()
-    return [occurrence_out(item) for item in occurrences]
+    if context.role == GroupRole.OWNER:
+        return [occurrence_out(item, can_respond=True) for item in occurrences]
+
+    elder_ids = {item.schedule.medication.elder_id for item in occurrences}
+    assignments = (
+        await db.scalars(
+            select(CaregiverAssignment).where(
+                CaregiverAssignment.elder_id.in_(elder_ids),
+                CaregiverAssignment.caregiver_user_id == user.id,
+            )
+        )
+    ).all() if elder_ids else []
+    permissions = {item.elder_id: item for item in assignments}
+    return [
+        occurrence_out(
+            item,
+            can_respond=bool(
+                permissions.get(item.schedule.medication.elder_id)
+                and permissions[item.schedule.medication.elder_id].can_view_medications
+                and permissions[item.schedule.medication.elder_id].can_confirm_doses
+                and (
+                    item.schedule.assigned_caregiver_user_id is None
+                    or item.schedule.assigned_caregiver_user_id == user.id
+                )
+            ),
+        )
+        for item in occurrences
+    ]
 
 
 async def get_occurrence_for_group(
@@ -130,6 +159,7 @@ async def respond_to_occurrence(
             select(CaregiverAssignment).where(
                 CaregiverAssignment.elder_id == elder.id,
                 CaregiverAssignment.caregiver_user_id == user.id,
+                CaregiverAssignment.can_view_medications.is_(True),
                 CaregiverAssignment.can_confirm_doses.is_(True),
             )
         )
@@ -152,10 +182,22 @@ async def respond_to_occurrence(
             and existing.notes == payload.note
         )
         if same:
-            return occurrence_out(occurrence)
+            return occurrence_out(occurrence, can_respond=True)
         raise AppError(409, "DOSE_ALREADY_RESPONDED", "Lần uống này đã được phản hồi")
 
     now = datetime.now(UTC)
+    scheduled_for = occurrence.scheduled_for
+    if scheduled_for.tzinfo is None:
+        scheduled_for = scheduled_for.replace(tzinfo=UTC)
+    if occurrence.status == DoseStatus.SCHEDULED and scheduled_for > now:
+        raise AppError(409, "DOSE_NOT_DUE", "Chưa đến giờ thực hiện lần uống này")
+    if occurrence.status not in {
+        DoseStatus.SCHEDULED,
+        DoseStatus.DUE,
+        DoseStatus.UNCONFIRMED,
+    }:
+        raise AppError(409, "DOSE_NOT_ACTIONABLE", "Lần uống này không còn chờ phản hồi")
+
     response = DoseResponse(
         occurrence_id=occurrence.id,
         responded_by_user_id=user.id,
@@ -174,6 +216,18 @@ async def respond_to_occurrence(
         else DoseStatus.CANNOT_ADMINISTER
     )
     occurrence.next_action_at = None
+    await db.execute(
+        update(NotificationAttempt)
+        .where(
+            NotificationAttempt.occurrence_id == occurrence.id,
+            NotificationAttempt.delivered.is_(False),
+        )
+        .values(
+            delivery_attempt_count=3,
+            next_attempt_at=None,
+            error="Dose already responded",
+        )
+    )
     add_audit(
         db,
         group_id=context.group_id,
@@ -189,8 +243,7 @@ async def respond_to_occurrence(
         await db.rollback()
         current = await get_occurrence_for_group(occurrence_id, context.group_id, db)
         if current.response and current.response.responded_by_user_id == user.id:
-            return occurrence_out(current)
+            return occurrence_out(current, can_respond=True)
         raise AppError(409, "DOSE_ALREADY_RESPONDED", "Lần uống này đã được phản hồi") from None
     await db.refresh(response)
-    return occurrence_out(occurrence)
-
+    return occurrence_out(occurrence, can_respond=True)

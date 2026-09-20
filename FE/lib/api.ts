@@ -6,7 +6,10 @@ import type {
   DoseOccurrence,
   Elder,
   Invitation,
+  InvitationInspection,
+  InvitationSummary,
   MedicationSchedule,
+  TelegramLink,
 } from "@/lib/types";
 
 type AuthResponse = {
@@ -22,18 +25,26 @@ type AuthResponse = {
 };
 
 function normalizeAuth(payload: AuthResponse): CurrentUser {
-  const group = payload.groups.find((item) => item.id === payload.default_group_id) ?? payload.groups[0];
-  if (!group) throw new ApiError("Tài khoản chưa thuộc nhóm chăm sóc nào.", 422, "MISSING_GROUP");
+  const groups = payload.groups.map((item) => ({
+    care_group_id: item.id,
+    care_group_name: item.name,
+    role: item.role,
+  }));
+  const storedGroupId = typeof window !== "undefined"
+    ? window.localStorage.getItem("healthguard_group_id")
+    : null;
+  const group = groups.find((item) => item.care_group_id === storedGroupId)
+    ?? groups.find((item) => item.care_group_id === payload.default_group_id)
+    ?? groups[0]
+    ?? null;
   if (typeof window !== "undefined") {
-    window.localStorage.setItem("healthguard_group_id", group.id);
+    if (group) window.localStorage.setItem("healthguard_group_id", group.care_group_id);
+    else window.localStorage.removeItem("healthguard_group_id");
   }
   return {
     ...payload.user,
-    current_group: {
-      care_group_id: group.id,
-      care_group_name: group.name,
-      role: group.role,
-    },
+    groups,
+    current_group: group,
   };
 }
 
@@ -104,36 +115,52 @@ export const authApi = {
   me: async () => normalizeAuth(await request<AuthResponse>("/auth/me")),
   login: async (body: { email: string; password: string }) =>
     normalizeAuth(await request<AuthResponse>("/auth/login", { method: "POST", body })),
-  registerOwner: (body: {
+  register: (body: {
     full_name: string;
     email: string;
     password: string;
-    care_group_name: string;
-  }) => request<AuthResponse>("/auth/register-owner", { method: "POST", body }).then(normalizeAuth),
+  }) => request<AuthResponse>("/auth/register", { method: "POST", body }).then(normalizeAuth),
   registerCaregiver: (body: {
     full_name: string;
     email: string;
     password: string;
     invitation_token: string;
   }) => request<AuthResponse>("/auth/register-caregiver", { method: "POST", body }).then(normalizeAuth),
+  inspectInvitation: (token: string) =>
+    request<InvitationInspection>(`/invitations/${encodeURIComponent(token)}`),
+  acceptInvitation: (token: string) =>
+    request<{ message: string }>(`/invitations/${encodeURIComponent(token)}/accept`, {
+      method: "POST",
+    }),
+  createTelegramLink: () =>
+    request<TelegramLink>("/auth/telegram-link", { method: "POST" }),
   logout: () => request<void>("/auth/logout", { method: "POST" }),
 };
 
 export const eldersApi = {
   list: () => request<Elder[]>("/elders"),
-  create: (body: Omit<Elder, "id" | "group_id" | "is_active">) =>
+  create: (body: Omit<Elder, "id" | "group_id" | "is_active" | "can_view_medications" | "can_confirm_doses" | "can_view_diagnoses">) =>
     request<Elder>("/elders", { method: "POST", body }),
-  update: (id: string, body: Partial<Omit<Elder, "id" | "group_id" | "is_active">>) =>
+  update: (id: string, body: Partial<Omit<Elder, "id" | "group_id" | "is_active" | "can_view_medications" | "can_confirm_doses" | "can_view_diagnoses">>) =>
     request<Elder>(`/elders/${id}`, { method: "PATCH", body }),
 };
 
 export const careApi = {
+  createGroup: (name: string) =>
+    request<{ id: string; name: string; role: "OWNER" }>("/care-groups", {
+      method: "POST",
+      body: { name },
+    }),
   members: () => request<CareGroupMember[]>("/care-groups/current/members"),
+  invitations: () =>
+    request<InvitationSummary[]>("/care-groups/current/invitations"),
   invite: (email: string) =>
     request<Invitation>("/care-groups/current/invitations", {
       method: "POST",
       body: { email },
     }),
+  revokeInvitation: (invitationId: string) =>
+    request<void>(`/care-groups/current/invitations/${invitationId}`, { method: "DELETE" }),
   removeMember: (userId: string) =>
     request<void>(`/care-groups/current/members/${userId}`, { method: "DELETE" }),
   assign: (
@@ -163,6 +190,23 @@ export const medicationApi = {
       method: "POST",
       body,
     }),
+  update: (
+    scheduleId: string,
+    body: Pick<
+      MedicationSchedule,
+      | "medication_name"
+      | "dose_amount"
+      | "dose_unit"
+      | "instructions"
+      | "end_date"
+      | "time_of_day"
+      | "days_of_week"
+      | "timezone"
+      | "reminder_offsets_minutes"
+      | "escalation_after_minutes"
+      | "assigned_caregiver_user_id"
+    >,
+  ) => request<MedicationSchedule>(`/medication-schedules/${scheduleId}`, { method: "PATCH", body }),
   stop: (scheduleId: string) =>
     request<void>(`/medication-schedules/${scheduleId}`, { method: "DELETE" }),
 };

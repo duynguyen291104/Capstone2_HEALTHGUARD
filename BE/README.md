@@ -42,24 +42,21 @@ Từ thư mục `BE`:
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements-dev.txt
-Copy-Item .env.example .env
+python .\scripts\configure_local.py
 ```
 
-Mở `.env` và thay ít nhất:
+Script hỏi mật khẩu PostgreSQL hai lần ở chế độ ẩn, URL encode các ký tự đặc biệt, tự sinh
+`JWT_SECRET` và tạo `.env` từ `.env.example`. Mật khẩu không xuất hiện trên màn hình hoặc
+trong lịch sử PowerShell.
 
-```dotenv
-DATABASE_URL=postgresql+asyncpg://eldercare_app:MAT_KHAU@localhost:5432/eldercare_dev
-JWT_SECRET=CHUOI_NGAU_NHIEN_TOI_THIEU_32_KY_TU
-```
-
-Tạo secret ngẫu nhiên:
+Nếu `.env` đã tồn tại, script chỉ ghi đè khi bạn gõ chính xác `GHI_DE`. Dùng `--force` khi
+bạn chủ động muốn ghi đè không cần hỏi, hoặc xem đầy đủ tùy chọn kết nối bằng:
 
 ```powershell
-python -c "import secrets; print(secrets.token_urlsafe(48))"
+python .\scripts\configure_local.py --help
 ```
 
-Nếu mật khẩu PostgreSQL chứa `@`, `:`, `/`, `#` hoặc ký tự đặc biệt khác, hãy URL encode
-mật khẩu trước khi đưa vào `DATABASE_URL`.
+Không commit `.env` hoặc gửi nội dung file này lên GitHub.
 
 Tạo bảng và chạy API:
 
@@ -91,8 +88,8 @@ python -m app.worker --once
 Mặc định frontend chạy tại `http://localhost:3000`. Backend đã bật CORS credentials cho
 origin này. Frontend phải gửi `credentials: "include"` trong mọi request cần đăng nhập.
 
-Sau khi đăng nhập, response `/api/v1/auth/me` trả `default_group_id`. Frontend gửi giá trị
-đó qua header sau khi người dùng chọn nhóm:
+Sau khi đăng nhập, response `/api/v1/auth/me` trả `current_group` nếu tài khoản đã tạo hoặc
+tham gia nhóm. Frontend gửi ID nhóm đó qua header:
 
 ```text
 X-Care-Group-ID: <UUID>
@@ -121,7 +118,7 @@ Phần thuốc vẫn chạy khi chưa cấu hình Telegram; các lần gửi s�
 
 Backend không nhận `chat_id` trực tiếp từ form người dùng. Webhook đã xác thực sẽ liên kết
 `chat_id` với tài khoản. Tin nhắc có nút mở:
-`/hom-nay?occurrence=<UUID>` trên frontend.
+`/hom-nay?date=YYYY-MM-DD&occurrence=<UUID>` trên frontend.
 
 ## Endpoint chính
 
@@ -129,7 +126,8 @@ Tất cả nằm dưới `/api/v1`:
 
 | Nhóm | Endpoint |
 |---|---|
-| Auth | `POST /auth/register-owner`, `/auth/register-caregiver`, `/auth/login`, `/auth/logout`; `GET /auth/me` |
+| Auth | `POST /auth/register`, `/auth/register-caregiver`, `/auth/login`, `/auth/logout`; `GET /auth/me` |
+| Nhóm | `POST /care-groups` để tài khoản chưa có nhóm tạo nhóm và trở thành `OWNER` |
 | Thành viên | `GET /care-groups/current/members`, `POST /care-groups/current/invitations`, `DELETE /care-groups/current/members/{user_id}` |
 | Lời mời | `GET /invitations/{token}` |
 | Người cao tuổi | `GET/POST /elders`, `GET/PATCH /elders/{id}` |
@@ -170,9 +168,10 @@ python -m pytest -q -p no:cacheprovider
 python -m compileall app
 ```
 
-Các test hiện có kiểm tra đăng ký/đăng nhập/logout, Argon2, cô lập dữ liệu giữa gia đình,
-lời mời đúng email, phân quyền caregiver, tạo lịch, xác nhận idempotent và worker chuyển
-lần quá hạn sang `UNCONFIRMED` mà không tạo cảnh báo trùng.
+Các test hiện có kiểm tra đăng ký/đăng nhập/logout, tạo nhóm sau đăng ký, Argon2, cô lập dữ
+liệu giữa gia đình, lời mời đúng email, tài khoản có sẵn chấp nhận lời mời, phân quyền
+caregiver, tạo/sửa/ngừng lịch, xác nhận idempotent và worker chuyển lần quá hạn sang
+`UNCONFIRMED` mà không tạo cảnh báo trùng.
 
 ## Migration
 
@@ -184,4 +183,3 @@ python -m alembic downgrade -1
 
 Không tạo hoặc sửa bảng bằng chuột trong pgAdmin. Mọi thay đổi schema phải có migration
 Alembic mới và được commit cùng mã nguồn.
-

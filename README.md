@@ -51,15 +51,14 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 python -m pip install -r requirements-dev.txt
-Copy-Item .env.example .env
+python .\scripts\configure_local.py
 ```
 
-Mở `BE/.env` và thay:
-
-- `CHANGE_ME` trong `DATABASE_URL` bằng mật khẩu của role `eldercare_app`.
-- `JWT_SECRET` bằng một chuỗi bí mật ngẫu nhiên dài ít nhất 32 ký tự.
-
-Không commit file `.env` hoặc gửi mật khẩu lên GitHub.
+Lệnh cấu hình sẽ hỏi mật khẩu PostgreSQL hai lần ở chế độ ẩn, tự URL encode ký tự đặc
+biệt, tự sinh `JWT_SECRET` và tạo `BE/.env`. Mật khẩu không xuất hiện trong câu lệnh hay
+màn hình. Nếu `BE/.env` đã tồn tại, script chỉ ghi đè khi bạn gõ `GHI_DE`; có thể xem các
+tùy chọn bằng `python .\scripts\configure_local.py --help`. Không commit file `.env` hoặc
+gửi mật khẩu lên GitHub.
 
 Tạo bảng bằng migration:
 
@@ -102,15 +101,16 @@ Mở `http://localhost:3000`.
 
 ## Luồng kiểm thử thủ công
 
-1. Đăng ký một tài khoản chủ nhà.
-2. Tạo hồ sơ người được chăm sóc.
-3. Tạo lời mời và sao chép đường dẫn mời.
-4. Mở đường dẫn ở cửa sổ ẩn danh để đăng ký tài khoản người chăm sóc.
-5. Chủ nhà phân công người chăm sóc cho hồ sơ.
-6. Chủ nhà tạo lịch thuốc.
-7. Chạy worker một chu kỳ hoặc chờ tới giờ đã đặt.
-8. Người chăm sóc mở trang `Hôm nay` và phản hồi lần uống.
-9. Chủ nhà kiểm tra trạng thái và người đã phản hồi.
+1. Đăng ký tài khoản. Hệ thống tự đăng nhập nhưng chưa tạo nhóm.
+2. Đặt tên và tạo nhóm chăm sóc ở màn hình tiếp theo; tài khoản trở thành `OWNER`.
+3. Tạo hồ sơ người được chăm sóc.
+4. Tạo lời mời và sao chép đường dẫn mời.
+5. Mở đường dẫn ở cửa sổ ẩn danh. Người chăm sóc có thể tạo tài khoản mới hoặc đăng nhập tài khoản chưa thuộc nhóm để chấp nhận lời mời.
+6. Chủ nhà phân công người chăm sóc cho hồ sơ và chọn từng quyền.
+7. Chủ nhà tạo lịch thuốc.
+8. Chạy worker một chu kỳ hoặc chờ tới giờ đã đặt.
+9. Người chăm sóc mở trang `Hôm nay` và phản hồi lần uống.
+10. Chủ nhà kiểm tra trạng thái và người đã phản hồi.
 
 ## Kiểm tra mã nguồn
 

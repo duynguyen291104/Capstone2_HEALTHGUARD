@@ -1,11 +1,11 @@
 "use client";
 
-import { AlarmClock, CalendarRange, CircleStop, Clock3, Pill, Plus, UserRound } from "lucide-react";
+import { AlarmClock, CalendarRange, CircleStop, Clock3, Pencil, Pill, Plus, UserRound } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
 import { Button, EmptyState, ErrorNotice, Field, Modal, PageHeader, SelectField, SkeletonList, TextareaField } from "@/components/ui";
 import { careApi, eldersApi, getErrorMessage, medicationApi } from "@/lib/api";
-import type { CareGroupMember, Elder, MedicationSchedule } from "@/lib/types";
+import type { CaregiverAssignment, CareGroupMember, Elder, MedicationSchedule } from "@/lib/types";
 
 const weekdayOptions = [
   { value: 0, short: "T2", label: "Thứ Hai" },
@@ -27,27 +27,33 @@ function formatDate(date: string | null) {
   return new Intl.DateTimeFormat("vi-VN").format(new Date(`${date}T00:00:00`));
 }
 
+function vietnamToday() {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh" }).format(new Date());
+}
+
 function ScheduleForm({
   elderId,
   caregivers,
+  schedule,
   onSaved,
   onClose,
 }: {
   elderId: string;
   caregivers: CareGroupMember[];
+  schedule?: MedicationSchedule;
   onSaved: (schedule: MedicationSchedule) => void;
   onClose: () => void;
 }) {
-  const today = new Date().toISOString().slice(0, 10);
-  const [name, setName] = useState("");
-  const [amount, setAmount] = useState("");
-  const [unit, setUnit] = useState("viên");
-  const [time, setTime] = useState("08:00");
-  const [days, setDays] = useState<number[]>(weekdayOptions.map((day) => day.value));
-  const [startDate, setStartDate] = useState(today);
-  const [endDate, setEndDate] = useState("");
-  const [instructions, setInstructions] = useState("");
-  const [caregiverId, setCaregiverId] = useState("");
+  const today = vietnamToday();
+  const [name, setName] = useState(schedule?.medication_name ?? "");
+  const [amount, setAmount] = useState(schedule ? String(schedule.dose_amount) : "");
+  const [unit, setUnit] = useState(schedule?.dose_unit ?? "viên");
+  const [time, setTime] = useState(schedule?.time_of_day.slice(0, 5) ?? "08:00");
+  const [days, setDays] = useState<number[]>(schedule ? [...schedule.days_of_week] : weekdayOptions.map((day) => day.value));
+  const [startDate, setStartDate] = useState(schedule?.start_date ?? today);
+  const [endDate, setEndDate] = useState(schedule?.end_date ?? "");
+  const [instructions, setInstructions] = useState(schedule?.instructions ?? "");
+  const [caregiverId, setCaregiverId] = useState(schedule?.assigned_caregiver_user_id ?? "");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -62,7 +68,7 @@ function ScheduleForm({
     setSaving(true);
     setError("");
     try {
-      const saved = await medicationApi.create(elderId, {
+      const editableValues = {
         medication_name: name.trim(),
         dose_amount: Number(amount),
         dose_unit: unit.trim(),
@@ -71,11 +77,26 @@ function ScheduleForm({
         days_of_week: days,
         start_date: startDate,
         end_date: endDate || null,
-        timezone: "Asia/Bangkok",
+        timezone: "Asia/Ho_Chi_Minh",
         reminder_offsets_minutes: [0, 15, 30, 45],
         escalation_after_minutes: 60,
         assigned_caregiver_user_id: caregiverId || null,
-      });
+      };
+      const saved = schedule
+        ? await medicationApi.update(schedule.id, {
+            medication_name: editableValues.medication_name,
+            dose_amount: editableValues.dose_amount,
+            dose_unit: editableValues.dose_unit,
+            instructions: editableValues.instructions,
+            time_of_day: editableValues.time_of_day,
+            days_of_week: editableValues.days_of_week,
+            end_date: editableValues.end_date,
+            timezone: editableValues.timezone,
+            reminder_offsets_minutes: editableValues.reminder_offsets_minutes,
+            escalation_after_minutes: editableValues.escalation_after_minutes,
+            assigned_caregiver_user_id: editableValues.assigned_caregiver_user_id,
+          })
+        : await medicationApi.create(elderId, { ...editableValues, start_date: startDate });
       onSaved(saved);
     } catch (caught) {
       setError(getErrorMessage(caught));
@@ -108,11 +129,19 @@ function ScheduleForm({
           ))}
         </div>
       </fieldset>
-      <Field label="Ngày bắt đầu *" type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} required />
+      <Field
+        label="Ngày bắt đầu *"
+        type="date"
+        value={startDate}
+        onChange={(event) => setStartDate(event.target.value)}
+        disabled={Boolean(schedule)}
+        hint={schedule ? "Ngày bắt đầu được giữ nguyên để bảo toàn lịch sử." : undefined}
+        required
+      />
       <Field label="Ngày kết thúc" type="date" min={startDate} value={endDate} onChange={(event) => setEndDate(event.target.value)} hint="Để trống nếu dùng đến khi có chỉ định mới." />
       <div className="form-grid__full"><TextareaField label="Hướng dẫn theo đơn" value={instructions} onChange={(event) => setInstructions(event.target.value)} placeholder="Ví dụ: Uống sau bữa sáng" /></div>
       <div className="reminder-summary form-grid__full"><AlarmClock size={19} /><p><strong>Quy tắc nhắc mặc định:</strong> đúng giờ, sau 15, 30 và 45 phút. Sau 60 phút chưa có phản hồi, hệ thống chuyển thành “Chưa xác nhận”.</p></div>
-      <div className="form-actions form-grid__full"><Button type="button" variant="secondary" onClick={onClose}>Hủy</Button><Button type="submit" loading={saving}>Tạo lịch thuốc</Button></div>
+      <div className="form-actions form-grid__full"><Button type="button" variant="secondary" onClick={onClose}>Hủy</Button><Button type="submit" loading={saving}>{schedule ? "Lưu thay đổi" : "Tạo lịch thuốc"}</Button></div>
     </form>
   );
 }
@@ -121,14 +150,16 @@ export function MedicationsPage() {
   const { user } = useAuth();
   const [elders, setElders] = useState<Elder[]>([]);
   const [caregivers, setCaregivers] = useState<CareGroupMember[]>([]);
+  const [assignments, setAssignments] = useState<CaregiverAssignment[]>([]);
   const [elderId, setElderId] = useState("");
   const [schedules, setSchedules] = useState<MedicationSchedule[]>([]);
   const [initialLoading, setInitialLoading] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState<MedicationSchedule | null>(null);
   const [stopping, setStopping] = useState<string | null>(null);
-  const isOwner = user?.current_group.role === "OWNER";
+  const isOwner = user?.current_group?.role === "OWNER";
 
   useEffect(() => {
     async function initialize() {
@@ -136,8 +167,11 @@ export function MedicationsPage() {
       setError("");
       try {
         const elderList = await eldersApi.list();
-        setElders(elderList);
-        setElderId(elderList[0]?.id ?? "");
+        const medicationElders = isOwner
+          ? elderList
+          : elderList.filter((elder) => elder.can_view_medications);
+        setElders(medicationElders);
+        setElderId(medicationElders[0]?.id ?? "");
         if (isOwner) {
           const members = await careApi.members();
           setCaregivers(members.filter((member) => member.role === "CAREGIVER"));
@@ -154,14 +188,27 @@ export function MedicationsPage() {
   useEffect(() => {
     if (!elderId) return;
     let active = true;
-    medicationApi.list(elderId)
-      .then((items) => { if (active) setSchedules(items); })
+    Promise.all([
+      medicationApi.list(elderId),
+      isOwner ? careApi.assignments(elderId) : Promise.resolve([]),
+    ])
+      .then(([items, assignmentList]) => {
+        if (!active) return;
+        setSchedules(items);
+        setAssignments(assignmentList);
+      })
       .catch((caught) => { if (active) setError(getErrorMessage(caught)); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [elderId]);
+  }, [elderId, isOwner]);
 
   const selectedElder = useMemo(() => elders.find((elder) => elder.id === elderId), [elderId, elders]);
+  const eligibleCaregivers = useMemo(
+    () => caregivers.filter((caregiver) => assignments.some(
+      (assignment) => assignment.caregiver_user_id === caregiver.user_id && assignment.can_confirm_doses,
+    )),
+    [assignments, caregivers],
+  );
 
   async function stop(schedule: MedicationSchedule) {
     if (!window.confirm(`Ngừng lịch ${schedule.medication_name}? Lịch sử cũ vẫn được giữ lại.`)) return;
@@ -189,7 +236,7 @@ export function MedicationsPage() {
       />
       {elders.length ? (
         <div className="toolbar-card">
-          <SelectField label="Đang xem lịch của" value={elderId} onChange={(event) => { setLoading(true); setSchedules([]); setElderId(event.target.value); }}>
+          <SelectField label="Đang xem lịch của" value={elderId} onChange={(event) => { setError(""); setLoading(true); setSchedules([]); setElderId(event.target.value); }}>
             {elders.map((elder) => <option key={elder.id} value={elder.id}>{elder.full_name}</option>)}
           </SelectField>
           <p><Pill size={17} /> Chỉ nhập thuốc và liều lượng đúng theo đơn hoặc hướng dẫn của nhân viên y tế.</p>
@@ -207,10 +254,11 @@ export function MedicationsPage() {
               <div className="schedule-card__time"><Clock3 size={19} /><strong>{schedule.time_of_day.slice(0, 5)}</strong><span>{formatDays(schedule.days_of_week)}</span></div>
               <div className="schedule-card__main">
                 <div><span className="pill-icon"><Pill size={20} /></span><div><h2>{schedule.medication_name}</h2><p>{schedule.dose_amount} {schedule.dose_unit}{schedule.instructions ? ` · ${schedule.instructions}` : ""}</p></div></div>
-                <div className="schedule-card__meta"><span><CalendarRange size={16} /> {formatDate(schedule.start_date)} → {formatDate(schedule.end_date)}</span><span><UserRound size={16} /> {caregivers.find((item) => item.user_id === schedule.assigned_caregiver_user_id)?.full_name ?? "Chưa chỉ định"}</span></div>
+                <div className="schedule-card__meta"><span><CalendarRange size={16} /> {formatDate(schedule.start_date)} → {formatDate(schedule.end_date)}</span><span><UserRound size={16} /> {caregivers.find((item) => item.user_id === schedule.assigned_caregiver_user_id)?.full_name ?? (schedule.assigned_caregiver_user_id ? "Đã chỉ định người phụ trách" : "Chưa chỉ định")}</span></div>
               </div>
               <div className="schedule-card__actions">
                 <span className={schedule.is_active ? "status-dot status-dot--active" : "status-dot"}>{schedule.is_active ? "Đang hoạt động" : "Đã ngừng"}</span>
+                {isOwner && schedule.is_active ? <Button type="button" variant="ghost" onClick={() => setEditing(schedule)}><Pencil size={17} /> Sửa lịch</Button> : null}
                 {isOwner && schedule.is_active ? <Button type="button" variant="ghost" loading={stopping === schedule.id} onClick={() => stop(schedule)}><CircleStop size={17} /> Ngừng lịch</Button> : null}
               </div>
             </article>
@@ -219,7 +267,22 @@ export function MedicationsPage() {
       )}
       {creating ? (
         <Modal title={`Tạo lịch thuốc${selectedElder ? ` cho ${selectedElder.full_name}` : ""}`} description="Hệ thống sẽ tạo từng lần cần uống dựa trên lịch này." onClose={() => setCreating(false)}>
-          <ScheduleForm elderId={elderId} caregivers={caregivers} onSaved={(schedule) => { setSchedules((current) => [schedule, ...current]); setCreating(false); }} onClose={() => setCreating(false)} />
+          <ScheduleForm elderId={elderId} caregivers={eligibleCaregivers} onSaved={(schedule) => { setSchedules((current) => [schedule, ...current]); setCreating(false); }} onClose={() => setCreating(false)} />
+        </Modal>
+      ) : null}
+      {editing ? (
+        <Modal title={`Sửa lịch ${editing.medication_name}`} description="Thay đổi chỉ áp dụng cho các lần uống trong tương lai; lịch sử đã ghi nhận vẫn được giữ nguyên." onClose={() => setEditing(null)}>
+          <ScheduleForm
+            key={editing.id}
+            elderId={elderId}
+            caregivers={eligibleCaregivers}
+            schedule={editing}
+            onSaved={(saved) => {
+              setSchedules((current) => current.map((item) => item.id === editing.id ? saved : item));
+              setEditing(null);
+            }}
+            onClose={() => setEditing(null)}
+          />
         </Modal>
       ) : null}
     </>

@@ -12,7 +12,6 @@ from app.dependencies import CurrentUser, DbSession
 from app.errors import AppError
 from app.models import (
     AuthSession,
-    CareGroup,
     CareGroupMember,
     GroupRole,
     Invitation,
@@ -20,12 +19,12 @@ from app.models import (
     User,
 )
 from app.schemas import (
+    AccountRegister,
     AuthOut,
     CaregiverRegister,
     GroupSummary,
     LoginRequest,
     MessageOut,
-    OwnerRegister,
     TelegramLinkOut,
     UserOut,
 )
@@ -98,8 +97,8 @@ async def create_login_session(db: DbSession, user: User, response: Response) ->
     set_auth_cookie(response, token)
 
 
-@router.post("/register-owner", response_model=AuthOut, status_code=status.HTTP_201_CREATED)
-async def register_owner(payload: OwnerRegister, response: Response, db: DbSession) -> AuthOut:
+@router.post("/register", response_model=AuthOut, status_code=status.HTTP_201_CREATED)
+async def register_account(payload: AccountRegister, response: Response, db: DbSession) -> AuthOut:
     email = normalize_email(str(payload.email))
     if await db.scalar(select(User.id).where(User.email == email)):
         raise AppError(409, "EMAIL_ALREADY_EXISTS", "Email này đã được sử dụng")
@@ -112,18 +111,6 @@ async def register_owner(payload: OwnerRegister, response: Response, db: DbSessi
     )
     db.add(user)
     await db.flush()
-    group = CareGroup(name=payload.care_group_name.strip(), created_by_user_id=user.id)
-    db.add(group)
-    await db.flush()
-    db.add(CareGroupMember(group_id=group.id, user_id=user.id, role=GroupRole.OWNER))
-    add_audit(
-        db,
-        group_id=group.id,
-        actor_user_id=user.id,
-        action="OWNER_REGISTERED",
-        entity_type="user",
-        entity_id=user.id,
-    )
     await create_login_session(db, user, response)
     try:
         await db.commit()

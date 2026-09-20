@@ -258,6 +258,19 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .member-card__identity h2 { margin: 0; font-size: 15px; }
 .member-card__identity p { margin: 2px 0 5px; color: var(--muted); font-size: 11px; }
 .role-badge { padding: 3px 7px; border-radius: 99px; background: #eef3f1; color: #52645e; font-size: 9px; font-weight: 750; }
+.member-badges { display: flex; flex-wrap: wrap; gap: 5px; }
+.telegram-badge { padding: 3px 7px; border-radius: 99px; display: inline-flex; align-items: center; gap: 4px; background: #f5f1ed; color: #80664f; font-size: 9px; font-weight: 750; }
+.telegram-badge--linked { background: #e8f5ef; color: var(--success); }
+.pending-invitations { margin-bottom: 20px; padding: 17px; border: 1px solid var(--line); border-radius: 14px; background: white; }
+.pending-invitations > div:first-child { margin-bottom: 11px; }
+.pending-invitations h2 { margin: 0 0 2px; font-size: 15px; }
+.pending-invitations p { margin: 0; color: var(--muted); font-size: 11px; }
+.pending-invitations__list { display: grid; gap: 8px; }
+.pending-invitations__list article { padding: 10px 12px; border-radius: 10px; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px; background: var(--surface-soft); }
+.pending-invitations__list article > span { color: var(--brand); }
+.pending-invitations__list article div { min-width: 0; display: flex; flex-direction: column; }
+.pending-invitations__list strong { overflow-wrap: anywhere; font-size: 11px; }
+.pending-invitations__list small { color: var(--muted); font-size: 9px; }
 .assignment-control { display: grid; grid-template-columns: minmax(180px, 1fr) auto; align-items: end; gap: 9px; }
 .assignment-control .field { gap: 3px; }
 .assignment-control .field__control { min-height: 40px; }
@@ -336,6 +349,17 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .dose-card__actions { display: flex; gap: 8px; }
 .dose-card__actions .button { min-height: 39px; padding-inline: 13px; font-size: 11px; }
 .dose-card__error { grid-column: 1 / -1; }
+
+.notification-connect-card { max-width: 820px; padding: 28px; border: 1px solid var(--line); border-radius: var(--radius-lg); display: flex; align-items: flex-start; gap: 20px; background: var(--surface); box-shadow: var(--shadow-sm); }
+.notification-connect-card__icon { width: 58px; height: 58px; border-radius: 18px; display: grid; place-items: center; flex: 0 0 auto; background: var(--brand-soft); color: var(--brand); }
+.notification-connect-card__content { min-width: 0; flex: 1; }
+.notification-connect-card h2 { margin-bottom: 8px; font-size: 22px; }
+.notification-connect-card__content > p { margin-bottom: 19px; color: var(--muted); line-height: 1.7; }
+.notification-connect-card__actions { margin-top: 20px; display: flex; flex-wrap: wrap; gap: 10px; }
+.telegram-link-result { margin-top: 18px; padding: 14px; border: 1px solid #cce4d7; border-radius: 13px; display: flex; align-items: center; justify-content: space-between; gap: 15px; background: #edf8f2; }
+.telegram-link-result > div { display: flex; flex-direction: column; gap: 3px; }
+.telegram-link-result strong { color: var(--success); font-size: 14px; }
+.telegram-link-result span { color: var(--muted); font-size: 11px; }
 
 @media (max-width: 1100px) {
   .hero { grid-template-columns: 1fr 1fr; gap: 30px; }
@@ -436,8 +460,20 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .dose-card__medicine .pill-icon { display: none; }
   .dose-card__actions { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr; }
   .dose-card__actions .button { padding: 8px; }
+  .notification-connect-card { padding: 18px; flex-direction: column; }
+  .notification-connect-card__actions, .notification-connect-card__actions .button { width: 100%; }
+  .telegram-link-result { align-items: stretch; flex-direction: column; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+}
+
+.onboarding-page { min-height: 100vh; padding: 32px; display: flex; flex-direction: column; align-items: center; gap: 54px; background: radial-gradient(circle at 50% 18%, #e8f5f0 0, #f8fbfa 36%, #fff 72%); }
+.onboarding-page > .brand { align-self: flex-start; }
+.onboarding-card { width: min(100%, 560px); }
+.onboarding-card__icon { width: 58px; height: 58px; margin-bottom: 18px; border-radius: 18px; display: grid; place-items: center; background: var(--brand-soft); color: var(--brand); }
+
+@media (max-width: 600px) {
+  .onboarding-page { padding: 24px 18px; gap: 38px; }
 }

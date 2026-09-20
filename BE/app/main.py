@@ -20,8 +20,15 @@ from app.routers import (
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     settings = get_settings()
-    if settings.environment == "production" and settings.jwt_secret.startswith("development-"):
-        raise RuntimeError("Set a secure JWT_SECRET before starting production")
+    if settings.environment == "production":
+        unsafe_secret = (
+            settings.jwt_secret.startswith("development-")
+            or "CHANGE_ME" in settings.jwt_secret.upper()
+        )
+        if unsafe_secret:
+            raise RuntimeError("Set a secure JWT_SECRET before starting production")
+        if not settings.cookie_secure:
+            raise RuntimeError("COOKIE_SECURE must be true in production")
     yield
 
 
@@ -50,4 +57,3 @@ app.include_router(integrations.router, prefix=api_prefix)
 @app.get("/health", tags=["health"])
 async def health() -> dict[str, str]:
     return {"status": "ok"}
-

@@ -24,7 +24,7 @@ const reasonOptions = [
 ];
 
 function localDate() {
-  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Bangkok" }).format(new Date());
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh" }).format(new Date());
 }
 
 function longDate(date: string) {
@@ -32,7 +32,11 @@ function longDate(date: string) {
 }
 
 function timeOf(iso: string) {
-  return new Intl.DateTimeFormat("vi-VN", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Bangkok" }).format(new Date(iso));
+  return new Intl.DateTimeFormat("vi-VN", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Ho_Chi_Minh" }).format(new Date(iso));
+}
+
+function reasonLabel(reason: string) {
+  return reasonOptions.find((option) => option.value === reason)?.label ?? reason;
 }
 
 function CannotAdministerForm({ dose, onSaved, onClose }: { dose: DoseOccurrence; onSaved: (dose: DoseOccurrence) => void; onClose: () => void }) {
@@ -66,10 +70,15 @@ function CannotAdministerForm({ dose, onSaved, onClose }: { dose: DoseOccurrence
   );
 }
 
-function DoseCard({ dose, onUpdated, onCannot, highlighted }: { dose: DoseOccurrence; onUpdated: (dose: DoseOccurrence) => void; onCannot: () => void; highlighted?: boolean }) {
+function DoseCard({ dose, now, onUpdated, onCannot, highlighted }: { dose: DoseOccurrence; now: number | null; onUpdated: (dose: DoseOccurrence) => void; onCannot: () => void; highlighted?: boolean }) {
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState("");
-  const actionable = dose.status === "DUE" || dose.status === "SCHEDULED";
+  const scheduledFor = new Date(dose.scheduled_for).getTime();
+  const actionable = dose.can_respond && (
+    dose.status === "DUE"
+    || dose.status === "UNCONFIRMED"
+    || (dose.status === "SCHEDULED" && now !== null && Number.isFinite(scheduledFor) && scheduledFor <= now)
+  );
 
   async function confirm() {
     setConfirming(true);
@@ -88,13 +97,19 @@ function DoseCard({ dose, onUpdated, onCannot, highlighted }: { dose: DoseOccurr
       <div className="dose-card__time"><strong>{timeOf(dose.scheduled_for)}</strong><span>{statusLabels[dose.status]}</span></div>
       <div className="dose-card__medicine">
         <span className="pill-icon"><Pill size={21} /></span>
-        <div><h2>{dose.medication_name}</h2><p>{dose.dose_amount} {dose.dose_unit} · {dose.elder_name}</p></div>
+        <div>
+          <h2>{dose.medication_name}</h2>
+          <p>{dose.dose_amount} {dose.dose_unit} · {dose.elder_name}</p>
+          {dose.instructions ? <p>Hướng dẫn: {dose.instructions}</p> : null}
+        </div>
       </div>
       <div className="dose-card__status">
         {dose.status === "ADMINISTERED" ? <CheckCircle2 size={19} /> : dose.status === "CANNOT_ADMINISTER" || dose.status === "UNCONFIRMED" ? <AlertTriangle size={19} /> : <Clock3 size={19} />}
         <span>
           <strong>{statusLabels[dose.status]}</strong>
           {dose.response?.responded_at ? <small>Lúc {timeOf(dose.response.responded_at)}</small> : dose.status === "UNCONFIRMED" ? <small>Cần liên hệ để kiểm tra</small> : null}
+          {dose.response?.reason ? <small>Lý do: {reasonLabel(dose.response.reason)}</small> : null}
+          {dose.response?.notes ? <small>Ghi chú: {dose.response.notes}</small> : null}
         </span>
       </div>
       {actionable ? (
@@ -108,13 +123,22 @@ function DoseCard({ dose, onUpdated, onCannot, highlighted }: { dose: DoseOccurr
   );
 }
 
-export function TodayPage() {
-  const [date, setDate] = useState(localDate);
+export function TodayPage({ highlightedId = "", initialDate }: { highlightedId?: string; initialDate?: string }) {
+  const [date, setDate] = useState(() => initialDate ?? localDate());
   const [doses, setDoses] = useState<DoseOccurrence[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [cannotDose, setCannotDose] = useState<DoseOccurrence | null>(null);
-  const highlightedId = typeof window === "undefined" ? "" : new URLSearchParams(window.location.search).get("occurrence") ?? "";
+  const [now, setNow] = useState<number | null>(null);
+
+  useEffect(() => {
+    const initialTimer = window.setTimeout(() => setNow(Date.now()), 0);
+    const interval = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => {
+      window.clearTimeout(initialTimer);
+      window.clearInterval(interval);
+    };
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -169,7 +193,7 @@ export function TodayPage() {
         <EmptyState title="Không có lịch thuốc trong ngày" description="Khi có lịch hoạt động, từng lần uống sẽ xuất hiện ở đây để người phụ trách xác nhận." />
       ) : (
         <div className="dose-list">
-          {doses.map((dose) => <DoseCard key={dose.id} dose={dose} highlighted={dose.id === highlightedId} onUpdated={update} onCannot={() => setCannotDose(dose)} />)}
+          {doses.map((dose) => <DoseCard key={dose.id} dose={dose} now={now} highlighted={dose.id === highlightedId} onUpdated={update} onCannot={() => setCannotDose(dose)} />)}
         </div>
       )}
       {cannotDose ? (

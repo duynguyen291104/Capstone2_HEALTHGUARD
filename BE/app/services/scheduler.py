@@ -43,9 +43,11 @@ async def ensure_occurrences(db: AsyncSession, now: datetime | None = None) -> i
                 selectinload(MedicationSchedule.medication).selectinload(Medication.elder)
             )
             .join(Medication, Medication.id == MedicationSchedule.medication_id)
+            .join(ElderProfile, ElderProfile.id == Medication.elder_id)
             .where(
                 MedicationSchedule.is_active.is_(True),
                 Medication.is_active.is_(True),
+                ElderProfile.is_active.is_(True),
             )
         )
     ).all()
@@ -97,14 +99,26 @@ async def reminder_recipients(
     elder = schedule.medication.elder
     if schedule.assigned_caregiver_user_id:
         assigned = await db.scalar(
-            select(CaregiverAssignment.caregiver_user_id).where(
+            select(CaregiverAssignment.caregiver_user_id)
+            .join(
+                CareGroupMember,
+                CareGroupMember.user_id == CaregiverAssignment.caregiver_user_id,
+            )
+            .join(User, User.id == CaregiverAssignment.caregiver_user_id)
+            .where(
                 CaregiverAssignment.elder_id == elder.id,
                 CaregiverAssignment.caregiver_user_id == schedule.assigned_caregiver_user_id,
+                CaregiverAssignment.can_view_medications.is_(True),
                 CaregiverAssignment.can_confirm_doses.is_(True),
+                CareGroupMember.group_id == elder.group_id,
+                CareGroupMember.role == GroupRole.CAREGIVER,
+                User.is_active.is_(True),
+                User.telegram_chat_id.is_not(None),
             )
         )
         if assigned:
             return [assigned]
+        return await owner_recipients(db, elder.group_id)
     recipients = (
         await db.scalars(
             select(CaregiverAssignment.caregiver_user_id)
@@ -112,11 +126,15 @@ async def reminder_recipients(
                 CareGroupMember,
                 CareGroupMember.user_id == CaregiverAssignment.caregiver_user_id,
             )
+            .join(User, User.id == CaregiverAssignment.caregiver_user_id)
             .where(
                 CaregiverAssignment.elder_id == elder.id,
+                CaregiverAssignment.can_view_medications.is_(True),
                 CaregiverAssignment.can_confirm_doses.is_(True),
                 CareGroupMember.group_id == elder.group_id,
                 CareGroupMember.role == GroupRole.CAREGIVER,
+                User.is_active.is_(True),
+                User.telegram_chat_id.is_not(None),
             )
         )
     ).all()
@@ -125,9 +143,12 @@ async def reminder_recipients(
     return list(
         (
             await db.scalars(
-                select(CareGroupMember.user_id).where(
+                select(CareGroupMember.user_id)
+                .join(User, User.id == CareGroupMember.user_id)
+                .where(
                     CareGroupMember.group_id == elder.group_id,
                     CareGroupMember.role == GroupRole.OWNER,
+                    User.is_active.is_(True),
                 )
             )
         ).all()
@@ -138,9 +159,12 @@ async def owner_recipients(db: AsyncSession, group_id: uuid.UUID) -> list[uuid.U
     return list(
         (
             await db.scalars(
-                select(CareGroupMember.user_id).where(
+                select(CareGroupMember.user_id)
+                .join(User, User.id == CareGroupMember.user_id)
+                .where(
                     CareGroupMember.group_id == group_id,
                     CareGroupMember.role == GroupRole.OWNER,
+                    User.is_active.is_(True),
                 )
             )
         ).all()
@@ -193,10 +217,16 @@ async def process_due_occurrences(
                 .selectinload(MedicationSchedule.medication)
                 .selectinload(Medication.elder)
             )
+            .join(MedicationSchedule, MedicationSchedule.id == DoseOccurrence.schedule_id)
+            .join(Medication, Medication.id == MedicationSchedule.medication_id)
+            .join(ElderProfile, ElderProfile.id == Medication.elder_id)
             .where(
                 DoseOccurrence.status.in_([DoseStatus.SCHEDULED, DoseStatus.DUE]),
                 DoseOccurrence.next_action_at.is_not(None),
                 DoseOccurrence.next_action_at <= now,
+                MedicationSchedule.is_active.is_(True),
+                Medication.is_active.is_(True),
+                ElderProfile.is_active.is_(True),
             )
             .order_by(DoseOccurrence.next_action_at)
             .limit(batch_size)
@@ -223,7 +253,13 @@ async def process_due_occurrences(
             continue
 
         offsets = schedule.reminder_offsets_minutes
-        ordinal = occurrence.reminder_count + 1
+        applicable_ordinal = max(
+            index + 1
+            for index, offset in enumerate(offsets)
+            if scheduled_for + timedelta(minutes=offset) <= now
+        )
+        ordinal = max(occurrence.reminder_count + 1, applicable_ordinal)
+        ordinal = min(ordinal, len(offsets))
         recipients = await reminder_recipients(db, schedule)
         await enqueue_attempts(
             db,
@@ -235,10 +271,16 @@ async def process_due_occurrences(
         )
         occurrence.status = DoseStatus.DUE
         occurrence.reminder_count = ordinal
-        if ordinal < len(offsets):
-            occurrence.next_action_at = scheduled_for + timedelta(minutes=offsets[ordinal])
-        else:
-            occurrence.next_action_at = escalation_at
+        future_offsets = [
+            offset
+            for offset in offsets[ordinal:]
+            if scheduled_for + timedelta(minutes=offset) > now
+        ]
+        occurrence.next_action_at = (
+            scheduled_for + timedelta(minutes=future_offsets[0])
+            if future_offsets
+            else escalation_at
+        )
     await db.commit()
     return len(occurrences)
 
@@ -299,10 +341,46 @@ async def dispatch_notifications(
     ).all()
     settings = get_settings()
     for attempt in attempts:
+        occurrence = attempt.occurrence
+        expected_status = (
+            DoseStatus.DUE
+            if attempt.kind == NotificationKind.REMINDER
+            else DoseStatus.UNCONFIRMED
+        )
+        if occurrence.status != expected_status:
+            attempt.delivery_attempt_count = 3
+            attempt.next_attempt_at = None
+            attempt.error = "Notification no longer applies to this dose"
+            continue
+
+        schedule = occurrence.schedule
+        if (
+            not schedule.is_active
+            or not schedule.medication.is_active
+            or not schedule.medication.elder.is_active
+        ):
+            attempt.delivery_attempt_count = 3
+            attempt.next_attempt_at = None
+            attempt.error = "Medication schedule is inactive"
+            continue
+        eligible_recipients = (
+            await reminder_recipients(db, schedule)
+            if attempt.kind == NotificationKind.REMINDER
+            else await owner_recipients(db, schedule.medication.elder.group_id)
+        )
+        if attempt.recipient_user_id not in eligible_recipients:
+            attempt.delivery_attempt_count = 3
+            attempt.next_attempt_at = None
+            attempt.error = "Recipient no longer has access"
+            continue
+
         text, label = notification_text(attempt)
+        local_date = as_utc(occurrence.scheduled_for).astimezone(
+            ZoneInfo(schedule.timezone)
+        ).date().isoformat()
         url = (
             f"{settings.frontend_base_url.rstrip('/')}/hom-nay"
-            f"?occurrence={attempt.occurrence_id}"
+            f"?date={local_date}&occurrence={attempt.occurrence_id}"
         )
         result = await telegram_client.send_message(
             chat_id=attempt.recipient.telegram_chat_id,

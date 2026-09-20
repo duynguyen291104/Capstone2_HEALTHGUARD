@@ -1,10 +1,10 @@
 "use client";
 
-import { Check, Copy, MailPlus, ShieldCheck, Trash2, UserRoundCog } from "lucide-react";
+import { BellOff, BellRing, Check, Copy, MailPlus, ShieldCheck, Trash2, UserRoundCog } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Button, EmptyState, ErrorNotice, Field, Modal, PageHeader, SelectField, SkeletonList, SuccessNotice } from "@/components/ui";
 import { careApi, eldersApi, getErrorMessage } from "@/lib/api";
-import type { CaregiverAssignment, CareGroupMember, Elder, Invitation } from "@/lib/types";
+import type { CaregiverAssignment, CareGroupMember, Elder, Invitation, InvitationSummary } from "@/lib/types";
 
 function InviteForm({ onCreated, onClose }: { onCreated: (invitation: Invitation) => void; onClose: () => void }) {
   const [email, setEmail] = useState("");
@@ -150,26 +150,34 @@ export function CaregiversPage() {
   const [members, setMembers] = useState<CareGroupMember[]>([]);
   const [elders, setElders] = useState<Elder[]>([]);
   const [assignments, setAssignments] = useState<CaregiverAssignment[]>([]);
+  const [invitations, setInvitations] = useState<InvitationSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [inviteOpen, setInviteOpen] = useState(false);
   const [invitation, setInvitation] = useState<Invitation | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
+  const [revokingInvitation, setRevokingInvitation] = useState<string | null>(null);
 
   const caregivers = useMemo(() => members.filter((member) => member.role === "CAREGIVER"), [members]);
+  const pendingInvitations = useMemo(
+    () => invitations.filter((item) => !item.accepted_at && !item.revoked_at),
+    [invitations],
+  );
 
   useEffect(() => {
     let active = true;
-    Promise.all([careApi.members(), eldersApi.list()])
-      .then(async ([memberList, elderList]) => {
+    Promise.all([careApi.members(), eldersApi.list(), careApi.invitations()])
+      .then(async ([memberList, elderList, invitationList]) => {
         const assignmentLists = await Promise.all(elderList.map((elder) => careApi.assignments(elder.id)));
-        return [memberList, elderList, assignmentLists.flat()] as const;
+        return [memberList, elderList, assignmentLists.flat(), invitationList] as const;
       })
-      .then(([memberList, elderList, assignmentList]) => {
+      .then(([memberList, elderList, assignmentList, invitationList]) => {
         if (!active) return;
         setMembers(memberList);
         setElders(elderList);
         setAssignments(assignmentList);
+        const now = Date.now();
+        setInvitations(invitationList.filter((item) => new Date(item.expires_at).getTime() > now));
       })
       .catch((caught) => { if (active) setError(getErrorMessage(caught)); })
       .finally(() => { if (active) setLoading(false); });
@@ -190,9 +198,43 @@ export function CaregiversPage() {
     }
   }
 
+  async function revokeInvitation(item: InvitationSummary) {
+    if (!window.confirm(`Thu hồi lời mời đã gửi tới ${item.email}?`)) return;
+    setRevokingInvitation(item.id);
+    setError("");
+    try {
+      await careApi.revokeInvitation(item.id);
+      setInvitations((current) => current.map((invitationItem) => (
+        invitationItem.id === item.id
+          ? { ...invitationItem, revoked_at: new Date().toISOString() }
+          : invitationItem
+      )));
+    } catch (caught) {
+      setError(getErrorMessage(caught));
+    } finally {
+      setRevokingInvitation(null);
+    }
+  }
+
   function closeInvite() {
     setInviteOpen(false);
     setInvitation(null);
+  }
+
+  function invitationCreated(created: Invitation) {
+    setInvitation(created);
+    setInvitations((current) => [
+      {
+        id: created.id,
+        email: created.email,
+        role: "CAREGIVER",
+        expires_at: created.expires_at,
+        accepted_at: null,
+        revoked_at: null,
+        created_at: new Date().toISOString(),
+      },
+      ...current,
+    ]);
   }
 
   function changeAssignment(assignment: CaregiverAssignment | null, elderId: string, caregiverId: string) {
@@ -212,6 +254,23 @@ export function CaregiversPage() {
       />
       <div className="info-strip"><ShieldCheck size={19} /><p>Mỗi người dùng tài khoản riêng để hệ thống ghi nhận chính xác ai đã thao tác. Bạn có thể thu hồi quyền bất cứ lúc nào.</p></div>
       {error ? <ErrorNotice message={error} /> : null}
+      {!loading && pendingInvitations.length ? (
+        <section className="pending-invitations" aria-labelledby="pending-invitations-title">
+          <div>
+            <h2 id="pending-invitations-title">Lời mời đang chờ</h2>
+            <p>Thu hồi ngay nếu bạn gửi nhầm email.</p>
+          </div>
+          <div className="pending-invitations__list">
+            {pendingInvitations.map((item) => (
+              <article key={item.id}>
+                <span><MailPlus size={18} aria-hidden="true" /></span>
+                <div><strong>{item.email}</strong><small>Hết hạn {new Intl.DateTimeFormat("vi-VN", { dateStyle: "short", timeStyle: "short" }).format(new Date(item.expires_at))}</small></div>
+                <Button type="button" variant="ghost" loading={revokingInvitation === item.id} onClick={() => revokeInvitation(item)}>Thu hồi</Button>
+              </article>
+            ))}
+          </div>
+        </section>
+      ) : null}
       {loading ? <SkeletonList rows={2} /> : caregivers.length === 0 ? (
         <EmptyState title="Chưa có người chăm sóc" description="Tạo lời mời và gửi liên kết cho người được thuê chăm sóc bố mẹ." action={<Button onClick={() => setInviteOpen(true)}><MailPlus size={18} /> Tạo lời mời</Button>} />
       ) : (
@@ -220,7 +279,17 @@ export function CaregiversPage() {
             <article className="member-card" key={member.user_id}>
               <div className="member-card__identity">
                 <span className="member-avatar"><UserRoundCog size={21} /></span>
-                <div><h2>{member.full_name}</h2><p>{member.email}</p><span className="role-badge">Người chăm sóc</span></div>
+                <div>
+                  <h2>{member.full_name}</h2>
+                  <p>{member.email}</p>
+                  <div className="member-badges">
+                    <span className="role-badge">Người chăm sóc</span>
+                    <span className={member.telegram_linked ? "telegram-badge telegram-badge--linked" : "telegram-badge"}>
+                      {member.telegram_linked ? <BellRing size={12} /> : <BellOff size={12} />}
+                      {member.telegram_linked ? "Đã nối Telegram" : "Chưa nối Telegram"}
+                    </span>
+                  </div>
+                </div>
               </div>
               <AssignmentControl member={member} elders={elders} assignments={assignments} onAssignmentsChange={changeAssignment} />
               <Button type="button" variant="ghost" className="member-card__remove" loading={removing === member.user_id} onClick={() => remove(member)}><Trash2 size={17} /> Thu hồi khỏi nhóm</Button>
@@ -230,7 +299,7 @@ export function CaregiversPage() {
       )}
       {inviteOpen ? (
         <Modal title={invitation ? "Gửi liên kết mời" : "Mời người chăm sóc"} description={invitation ? "Liên kết chỉ dành cho đúng email đã nhập." : "Người chăm sóc sẽ tự tạo mật khẩu cho tài khoản của họ."} onClose={closeInvite}>
-          {invitation ? <InviteResult invitation={invitation} onClose={closeInvite} /> : <InviteForm onCreated={setInvitation} onClose={closeInvite} />}
+          {invitation ? <InviteResult invitation={invitation} onClose={closeInvite} /> : <InviteForm onCreated={invitationCreated} onClose={closeInvite} />}
         </Modal>
       ) : null}
     </>
