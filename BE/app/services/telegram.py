@@ -1,4 +1,6 @@
 from dataclasses import dataclass
+from ipaddress import ip_address
+from urllib.parse import urlparse
 
 import httpx
 
@@ -10,6 +12,27 @@ class TelegramResult:
     delivered: bool
     message_id: str | None = None
     error: str | None = None
+
+
+def is_public_action_url(value: str) -> bool:
+    """Telegram rejects inline keyboard URLs that point to a local machine."""
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return False
+    hostname = parsed.hostname.lower()
+    if hostname == "localhost" or hostname.endswith(".localhost"):
+        return False
+    try:
+        address = ip_address(hostname)
+    except ValueError:
+        return True
+    return not (
+        address.is_private
+        or address.is_loopback
+        or address.is_link_local
+        or address.is_reserved
+        or address.is_unspecified
+    )
 
 
 class TelegramClient:
@@ -29,7 +52,7 @@ class TelegramClient:
         if not chat_id:
             return TelegramResult(False, error="Recipient has not linked Telegram")
         payload: dict = {"chat_id": chat_id, "text": text}
-        if action_url:
+        if action_url and is_public_action_url(action_url):
             payload["reply_markup"] = {
                 "inline_keyboard": [[{"text": action_label, "url": action_url}]]
             }
@@ -49,4 +72,3 @@ class TelegramClient:
 
 
 telegram_client = TelegramClient()
-
