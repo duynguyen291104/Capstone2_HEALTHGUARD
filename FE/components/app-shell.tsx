@@ -8,6 +8,7 @@ import {
   LogOut,
   Menu,
   Pill,
+  Settings,
   UserRoundCog,
   UsersRound,
   X,
@@ -187,6 +188,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </button>
           <div className="topbar__mobile-brand"><Brand href="/hom-nay" /></div>
           <div className="profile-menu">
+            <Link href="/cai-dat" className="icon-button" aria-label="Cài đặt tài khoản" title="Cài đặt tài khoản" onClick={() => setProfileOpen(false)}>
+              <Settings size={21} aria-hidden="true" />
+            </Link>
             <button className="profile-button" type="button" aria-expanded={profileOpen} onClick={() => setProfileOpen((value) => !value)}>
               <span className="avatar">{user?.full_name.trim().charAt(0).toUpperCase()}</span>
               <span className="profile-button__text">
@@ -198,6 +202,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             {profileOpen ? (
               <div className="profile-popover">
                 <p>{user?.email}</p>
+                <Link className="profile-settings-link" href="/cai-dat" onClick={() => setProfileOpen(false)}>
+                  <Settings size={17} aria-hidden="true" /> Cài đặt tài khoản
+                </Link>
                 <button type="button" onClick={logout}>
                   <LogOut size={17} aria-hidden="true" /> Đăng xuất
                 </button>

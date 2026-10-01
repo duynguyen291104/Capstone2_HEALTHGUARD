@@ -6,6 +6,7 @@ import { useAuth } from "@/components/auth-provider";
 import { Button, EmptyState, ErrorNotice, Field, Modal, PageHeader, SelectField, SkeletonList, TextareaField } from "@/components/ui";
 import { careApi, eldersApi, getErrorMessage, medicationApi } from "@/lib/api";
 import type { CaregiverAssignment, CareGroupMember, Elder, MedicationSchedule } from "@/lib/types";
+import { PrescriptionImport } from "@/components/prescription-import";
 
 const weekdayOptions = [
   { value: 0, short: "T2", label: "Thứ Hai" },
@@ -31,28 +32,31 @@ function vietnamToday() {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh" }).format(new Date());
 }
 
-function ScheduleForm({
+export function ScheduleForm({
   elderId,
   caregivers,
   schedule,
+  draft,
   onSaved,
   onClose,
 }: {
   elderId: string;
   caregivers: CareGroupMember[];
   schedule?: MedicationSchedule;
+  draft?: { medication_name: string; instructions: string };
   onSaved: (schedule: MedicationSchedule) => void;
   onClose: () => void;
 }) {
   const today = vietnamToday();
-  const [name, setName] = useState(schedule?.medication_name ?? "");
+  const [name, setName] = useState(schedule?.medication_name ?? draft?.medication_name ?? "");
   const [amount, setAmount] = useState(schedule ? String(schedule.dose_amount) : "");
-  const [unit, setUnit] = useState(schedule?.dose_unit ?? "viên");
-  const [time, setTime] = useState(schedule?.time_of_day.slice(0, 5) ?? "08:00");
-  const [days, setDays] = useState<number[]>(schedule ? [...schedule.days_of_week] : weekdayOptions.map((day) => day.value));
-  const [startDate, setStartDate] = useState(schedule?.start_date ?? today);
+  const [unit, setUnit] = useState(schedule?.dose_unit ?? (draft ? "" : "viên"));
+  const [time, setTime] = useState(schedule?.time_of_day.slice(0, 5) ?? (draft ? "" : "08:00"));
+  const [days, setDays] = useState<number[]>(schedule ? [...schedule.days_of_week] : draft ? [] : weekdayOptions.map((day) => day.value));
+  const [startDate, setStartDate] = useState(schedule?.start_date ?? (draft ? "" : today));
   const [endDate, setEndDate] = useState(schedule?.end_date ?? "");
-  const [instructions, setInstructions] = useState(schedule?.instructions ?? "");
+  const [instructions, setInstructions] = useState(schedule?.instructions ?? draft?.instructions ?? "");
+  const [reviewed, setReviewed] = useState(false);
   const [caregiverId, setCaregiverId] = useState(schedule?.assigned_caregiver_user_id ?? "");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -63,6 +67,8 @@ function ScheduleForm({
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
+    if (saving) return;
+    if (draft && !reviewed) return setError("Hãy đối chiếu với đơn gốc và xác nhận trước khi tạo lịch.");
     if (!name.trim() || !amount || !unit.trim()) return setError("Hãy nhập tên thuốc, liều lượng và đơn vị.");
     if (!days.length) return setError("Hãy chọn ít nhất một ngày uống trong tuần.");
     setSaving(true);
@@ -141,6 +147,7 @@ function ScheduleForm({
       <Field label="Ngày kết thúc" type="date" min={startDate} value={endDate} onChange={(event) => setEndDate(event.target.value)} hint="Để trống nếu dùng đến khi có chỉ định mới." />
       <div className="form-grid__full"><TextareaField label="Hướng dẫn theo đơn" value={instructions} onChange={(event) => setInstructions(event.target.value)} placeholder="Ví dụ: Uống sau bữa sáng" /></div>
       <div className="reminder-summary form-grid__full"><AlarmClock size={19} /><p><strong>Quy tắc nhắc mặc định:</strong> đúng giờ, sau 15, 30 và 45 phút. Sau 60 phút chưa có phản hồi, hệ thống chuyển thành “Chưa xác nhận”.</p></div>
+      {draft ? <label className="settings-checkbox form-grid__full"><input type="checkbox" required checked={reviewed} onChange={event => setReviewed(event.target.checked)} /> Tôi đã đối chiếu đúng người, tên thuốc/hàm lượng, liều, ngày và giờ uống với đơn gốc.</label> : null}
       <div className="form-actions form-grid__full"><Button type="button" variant="secondary" onClick={onClose}>Hủy</Button><Button type="submit" loading={saving}>{schedule ? "Lưu thay đổi" : "Tạo lịch thuốc"}</Button></div>
     </form>
   );
@@ -243,6 +250,7 @@ export function MedicationsPage() {
         </div>
       ) : null}
       {error ? <ErrorNotice message={error} /> : null}
+      {isOwner && elderId && !loading ? <PrescriptionImport key={elderId} elderId={elderId} elderName={selectedElder?.full_name ?? ""} caregivers={eligibleCaregivers} onSaved={saved => setSchedules(current => [saved, ...current])} /> : null}
       {!elders.length ? (
         <EmptyState title="Chưa có người được chăm sóc" description="Hãy tạo hồ sơ người cao tuổi trước khi thiết lập lịch thuốc." />
       ) : loading ? <SkeletonList /> : schedules.length === 0 ? (

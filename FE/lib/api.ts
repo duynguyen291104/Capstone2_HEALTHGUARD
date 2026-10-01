@@ -68,7 +68,8 @@ type RequestOptions = Omit<RequestInit, "body"> & {
 
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const headers = new Headers(options.headers);
-  if (options.body !== undefined) headers.set("Content-Type", "application/json");
+  const isFile = options.body instanceof Blob;
+  if (options.body !== undefined) headers.set("Content-Type", isFile ? (options.body as Blob).type || "application/octet-stream" : "application/json");
   if (typeof window !== "undefined") {
     const groupId = window.localStorage.getItem("healthguard_group_id");
     if (groupId) headers.set("X-Care-Group-ID", groupId);
@@ -80,7 +81,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
       ...options,
       headers,
       credentials: "include",
-      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+      body: options.body === undefined ? undefined : isFile ? options.body as Blob : JSON.stringify(options.body),
     });
   } catch {
     throw new ApiError(
@@ -112,6 +113,10 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 }
 
 export const authApi = {
+  updateProfile: async (body: { full_name: string; phone: string | null }) =>
+    normalizeAuth(await request<AuthResponse>("/auth/me", { method: "PATCH", body })),
+  changePassword: (body: { current_password: string; new_password: string }) =>
+    request<{ message: string }>("/auth/change-password", { method: "POST", body }),
   me: async () => normalizeAuth(await request<AuthResponse>("/auth/me")),
   login: async (body: { email: string; password: string }) =>
     normalizeAuth(await request<AuthResponse>("/auth/login", { method: "POST", body })),
@@ -183,6 +188,13 @@ export const careApi = {
 };
 
 export const medicationApi = {
+  readPrescription: (elderId: string, image: File) =>
+    request<{
+      provider: string;
+      text: string;
+      drafts: Array<{ medication_name: string; instructions: string; source_text: string }>;
+      warnings: string[];
+    }>(`/elders/${elderId}/prescription-ocr?consent=true`, { method: "POST", body: image }),
   list: (elderId: string) =>
     request<MedicationSchedule[]>(`/elders/${elderId}/medication-schedules`),
   create: (elderId: string, body: Omit<MedicationSchedule, "id" | "elder_id" | "medication_id" | "is_active">) =>

@@ -14,6 +14,7 @@ from app.routers import (
     integrations,
     invitations,
     medication_schedules,
+    prescription_ocr,
 )
 
 
@@ -52,6 +53,7 @@ app.include_router(elders.router, prefix=api_prefix)
 app.include_router(medication_schedules.router, prefix=api_prefix)
 app.include_router(doses.router, prefix=api_prefix)
 app.include_router(integrations.router, prefix=api_prefix)
+app.include_router(prescription_ocr.router, prefix=api_prefix)
 
 
 @app.get("/health", tags=["health"])

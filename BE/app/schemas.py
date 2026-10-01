@@ -53,6 +53,17 @@ class CaregiverRegister(BaseModel):
     invitation_token: str = Field(min_length=32, max_length=300)
 
 
+class ProfileUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    full_name: Name
+    phone: Annotated[str, StringConstraints(strip_whitespace=True, max_length=30)] | None = None
+
+
+class PasswordChange(BaseModel):
+    current_password: str = Field(min_length=1, max_length=128)
+    new_password: Password
+
+
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=1, max_length=128)

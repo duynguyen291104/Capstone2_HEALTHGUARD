@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     telegram_bot_token: str | None = None
     telegram_bot_username: str | None = None
     telegram_webhook_secret: str | None = None
+    tesseract_cmd: str | None = None
+    tesseract_data_dir: str | None = None
+    ocr_timeout_seconds: int = Field(default=30, ge=5, le=120)
+    ocr_requests_per_hour: int = Field(default=20, ge=1, le=100)
 
     @field_validator("cors_origins", mode="before")
     @classmethod

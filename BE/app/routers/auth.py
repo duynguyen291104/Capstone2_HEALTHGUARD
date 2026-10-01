@@ -2,7 +2,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Cookie, Response, status
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
@@ -27,6 +27,8 @@ from app.schemas import (
     MessageOut,
     TelegramLinkOut,
     UserOut,
+    ProfileUpdate,
+    PasswordChange,
 )
 from app.security import (
     create_access_token,
@@ -233,3 +235,34 @@ async def create_telegram_link(user: CurrentUser, db: DbSession) -> TelegramLink
         deep_link=f"https://t.me/{settings.telegram_bot_username}?start={raw_code}",
         expires_at=expires_at,
     )
+
+
+@router.patch("/me", response_model=AuthOut)
+async def update_profile(payload: ProfileUpdate, user: CurrentUser, db: DbSession) -> AuthOut:
+    user.full_name = payload.full_name
+    user.phone = payload.phone or None
+    await db.commit()
+    return await auth_out(db, user)
+
+
+@router.post("/change-password", response_model=MessageOut)
+async def change_password(
+    payload: PasswordChange, user: CurrentUser, db: DbSession, response: Response
+) -> MessageOut:
+    # Serialize changes so two requests cannot both validate an old password.
+    locked_user = await db.scalar(
+        select(User).where(User.id == user.id).with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if not locked_user or not verify_password(payload.current_password, locked_user.password_hash):
+        raise AppError(400, "INCORRECT_PASSWORD", "Mật khẩu hiện tại không đúng")
+    if payload.current_password == payload.new_password:
+        raise AppError(400, "PASSWORD_UNCHANGED", "Mật khẩu mới phải khác mật khẩu hiện tại")
+    locked_user.password_hash = hash_password(payload.new_password)
+    await db.execute(
+        update(AuthSession).where(AuthSession.user_id == user.id, AuthSession.revoked_at.is_(None))
+        .values(revoked_at=datetime.now(UTC))
+    )
+    await create_login_session(db, locked_user, response)
+    await db.commit()
+    return MessageOut(message="Đã đổi mật khẩu và đăng xuất các phiên đăng nhập khác")
