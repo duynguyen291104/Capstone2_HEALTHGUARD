@@ -271,6 +271,47 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .ocr-draft .button { flex-shrink: 0; }
 .ocr-edit { border-top: 1px solid var(--line); padding-top: 12px; }
 .ocr-edit .form-grid { grid-template-columns: 1fr; }
+.ocr-review--no-preview { grid-template-columns: minmax(0, 1fr); }
+.ocr-original { position: sticky; top: 20px; }
+.ocr-original img { max-height: calc(100vh - 120px); object-fit: contain; background: #f6f8f7; }
+.ocr-read-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.ocr-progress { color: var(--muted); font-size: 13px; }
+.ocr-quality { display: grid; gap: 7px; border: 1px solid var(--line); border-radius: 12px; background: var(--brand-soft); padding: 14px; }
+.ocr-quality strong { font-size: 14px; }
+.ocr-quality span, .ocr-notes p { font-size: 12px; line-height: 1.6; }
+.ocr-quality-warning { color: #855307; }
+.ocr-batch-form { display: grid; gap: 16px; }
+.ocr-shared-settings { padding: 14px; border: 1px solid var(--line); border-radius: 12px; }
+.ocr-shared-settings h3 { margin: 0 0 6px; font-size: 15px; }
+.ocr-shared-settings > p { font-size: 12px; color: var(--muted); margin: 0 0 12px; }
+.ocr-medication-card { border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+.ocr-medication-card--excluded { background: #f5f6f6; }
+.ocr-card-heading, .ocr-dose-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
+.ocr-include { display: flex; gap: 8px; align-items: center; }
+.ocr-include input { width: 16px; height: 16px; accent-color: var(--brand); }
+.ocr-card-fields { display: grid; gap: 12px; margin: 0; border: 0; padding: 0; min-width: 0; }
+.ocr-card-fields .field { min-width: 0; }
+.ocr-review-tag, .ocr-saved { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; }
+.ocr-review-tag { color: #855307; }
+.ocr-saved { color: var(--brand); }
+.ocr-field--review .field__control, .field__control.ocr-field--review { background: #fff9e7; border-color: #d8af51; }
+.ocr-field--review .field__hint { color: #855307; }
+.ocr-administrations { display: grid; gap: 8px; }
+.ocr-dose-row { padding: 12px; border: 1px solid var(--line); border-radius: 10px; }
+.ocr-dose-heading { margin-bottom: 8px; font-size: 13px; }
+.ocr-dose-fields { display: grid; grid-template-columns: 1fr 1fr 1.2fr; gap: 8px; }
+.ocr-dose-fields .field__label { font-size: 12px; }
+.ocr-dose-fields .field__hint { font-size: 11px; }
+.ocr-weekdays { border: 1px solid var(--line); border-radius: 10px; padding: 10px; min-width: 0; }
+.ocr-weekdays.ocr-field--review { border-color: #d8af51; background: #fffdf5; }
+.ocr-weekdays legend { font-size: 12px; font-weight: 600; }
+.ocr-weekdays .field__hint { display: block; }
+.ocr-daily-button { padding: 6px 0; border: 0; color: var(--brand); background: none; font-size: 12px; cursor: pointer; }
+.ocr-daily-button:disabled { cursor: default; color: var(--muted); }
+.ocr-save-bar { border-top: 1px solid var(--line); padding-top: 12px; }
+.ocr-save-bar > p { font-size: 12px; color: var(--muted); }
+@media (max-width: 1100px) { .ocr-dose-fields { grid-template-columns: 1fr 1fr; } .ocr-dose-fields > :last-child { grid-column: 1 / -1; } }
+@media (max-width: 860px) { .ocr-original { position: static; } .ocr-original img { max-height: 460px; } }
 @media (max-width: 860px) { .ocr-review { grid-template-columns: 1fr; } .ocr-panel-heading, .ocr-draft { align-items: stretch; flex-direction: column; } }
 
 /* Elders */

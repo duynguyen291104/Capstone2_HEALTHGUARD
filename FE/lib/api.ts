@@ -9,6 +9,7 @@ import type {
   InvitationInspection,
   InvitationSummary,
   MedicationSchedule,
+  PrescriptionOcrResult,
   TelegramLink,
 } from "@/lib/types";
 
@@ -189,17 +190,13 @@ export const careApi = {
 
 export const medicationApi = {
   readPrescription: (elderId: string, image: File) =>
-    request<{
-      provider: string;
-      text: string;
-      drafts: Array<{ medication_name: string; instructions: string; source_text: string }>;
-      warnings: string[];
-    }>(`/elders/${elderId}/prescription-ocr?consent=true`, { method: "POST", body: image }),
+    request<PrescriptionOcrResult>(`/elders/${elderId}/prescription-ocr?consent=true`, { method: "POST", body: image }),
   list: (elderId: string) =>
     request<MedicationSchedule[]>(`/elders/${elderId}/medication-schedules`),
-  create: (elderId: string, body: Omit<MedicationSchedule, "id" | "elder_id" | "medication_id" | "is_active">) =>
+  create: (elderId: string, body: Omit<MedicationSchedule, "id" | "elder_id" | "medication_id" | "is_active">, idempotencyKey?: string) =>
     request<MedicationSchedule>(`/elders/${elderId}/medication-schedules`, {
       method: "POST",
+      headers: idempotencyKey ? { "Idempotency-Key": idempotencyKey } : undefined,
       body,
     }),
   update: (

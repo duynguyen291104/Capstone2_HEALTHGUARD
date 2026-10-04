@@ -1,7 +1,9 @@
+import hashlib
+import json
 import uuid
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Response, status
+from fastapi import APIRouter, Request, Response, status
 from sqlalchemy import delete, select, update
 from sqlalchemy.orm import selectinload
 
@@ -9,6 +11,7 @@ from app.audit import add_audit
 from app.dependencies import CurrentUser, DbSession, ElderAccessDep, GroupCtx
 from app.errors import AppError, not_found
 from app.models import (
+    AuditLog,
     CareGroupMember,
     CaregiverAssignment,
     DoseOccurrence,
@@ -18,6 +21,7 @@ from app.models import (
     Medication,
     MedicationSchedule,
     NotificationAttempt,
+    User,
 )
 from app.schemas import ScheduleCreate, ScheduleOut, ScheduleUpdate
 
@@ -104,12 +108,40 @@ async def list_schedules(access: ElderAccessDep, db: DbSession) -> list[Schedule
 )
 async def create_schedule(
     payload: ScheduleCreate,
+    request: Request,
     access: ElderAccessDep,
     user: CurrentUser,
     db: DbSession,
 ) -> ScheduleOut:
     if not access.is_owner:
         raise AppError(403, "FORBIDDEN", "Chỉ chủ nhóm được tạo lịch thuốc")
+    # A batch import can lose a response after a successful commit. Reusing
+    # its per-slot key must acknowledge that schedule, not create a second one.
+    idempotency_key = request.headers.get("Idempotency-Key")
+    fingerprint = None
+    if idempotency_key:
+        try:
+            idempotency_key = str(uuid.UUID(idempotency_key))
+        except ValueError:
+            raise AppError(400, "INVALID_IDEMPOTENCY_KEY", "Mã lần lưu không hợp lệ") from None
+        fingerprint = hashlib.sha256(json.dumps(
+            {"elder_id": str(access.elder.id), "schedule": payload.model_dump(mode="json")},
+            sort_keys=True, ensure_ascii=False, separators=(",", ":"),
+        ).encode("utf-8")).hexdigest()
+        # PostgreSQL serializes concurrent retries by this authenticated user.
+        # The audit and schedule are committed in the same transaction below.
+        await db.scalar(select(User.id).where(User.id == user.id).with_for_update())
+        previous = await db.scalar(select(AuditLog).where(
+            AuditLog.actor_user_id == user.id,
+            AuditLog.group_id == access.context.group_id,
+            AuditLog.action == "MEDICATION_SCHEDULE_CREATED",
+            AuditLog.details["idempotency_key"].as_string() == idempotency_key,
+        ))
+        if previous:
+            if previous.details.get("request_fingerprint") != fingerprint:
+                raise AppError(409, "IMPORT_ALREADY_SAVED", "Lần lưu trước có nội dung khác. Tải lại danh sách lịch để kiểm tra trước khi tạo mới.")
+            schedule = await get_schedule_for_group(uuid.UUID(previous.entity_id), access.context.group_id, db)
+            return schedule_out(schedule)
     await validate_assigned_caregiver(
         db,
         elder_id=access.elder.id,
@@ -147,7 +179,10 @@ async def create_schedule(
         action="MEDICATION_SCHEDULE_CREATED",
         entity_type="medication_schedule",
         entity_id=schedule.id,
-        details={"elder_id": str(access.elder.id), "medication_name": medication.name},
+        details={
+            "elder_id": str(access.elder.id), "medication_name": medication.name,
+            **({"idempotency_key": idempotency_key, "request_fingerprint": fingerprint} if idempotency_key else {}),
+        },
     )
     await db.commit()
     return schedule_out(schedule)

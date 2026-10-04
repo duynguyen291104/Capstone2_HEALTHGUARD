@@ -103,6 +103,48 @@ export type MedicationSchedule = {
   is_active: boolean;
 };
 
+export type PrescriptionFieldReview = {
+  field: string;
+  reason: string;
+  confidence: number | null;
+};
+
+export type PrescriptionAdministration = {
+  label: string;
+  dose_amount: number | null;
+  dose_unit: string | null;
+  time_of_day: string | null;
+};
+
+export type PrescriptionDraft = {
+  medication_name: string;
+  instructions: string;
+  source_text: string;
+  dose_amount: number | null;
+  dose_unit: string | null;
+  administrations: PrescriptionAdministration[];
+  days_of_week: number[] | null;
+  duration_days: number | null;
+  confidence: number | null;
+  field_reviews: PrescriptionFieldReview[];
+};
+
+export type PrescriptionOcrResult = {
+  provider: string;
+  text: string;
+  drafts: PrescriptionDraft[];
+  warnings: string[];
+  quality: {
+    recognized_medications: number;
+    prefilled_fields: number;
+    total_fields: number;
+    coverage_percent: number;
+    low_confidence_fields: number;
+    elapsed_ms: number;
+    preprocessing: string[];
+  };
+};
+
 export type DoseStatus =
   | "SCHEDULED"
   | "DUE"

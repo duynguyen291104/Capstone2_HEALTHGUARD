@@ -96,11 +96,12 @@ export function TextareaField({
   label,
   id,
   hint,
+  className = "",
   ...props
 }: React.TextareaHTMLAttributes<HTMLTextAreaElement> & { label: string; hint?: string }) {
   const helpId = id ? `${id}-help` : undefined;
   return (
-    <label className="field" htmlFor={id}>
+    <label className={`field ${className}`} htmlFor={id}>
       <span className="field__label">{label}</span>
       <textarea
         id={id}

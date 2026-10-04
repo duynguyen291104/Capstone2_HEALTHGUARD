@@ -40,7 +40,7 @@ app.add_middleware(
     allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "X-Care-Group-ID", "X-Telegram-Bot-Api-Secret-Token"],
+    allow_headers=["Content-Type", "X-Care-Group-ID", "Idempotency-Key", "X-Telegram-Bot-Api-Secret-Token"],
 )
 app.add_exception_handler(AppError, app_error_handler)
 app.add_exception_handler(RequestValidationError, validation_error_handler)

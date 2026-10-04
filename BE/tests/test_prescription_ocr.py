@@ -31,7 +31,8 @@ def test_image_validation_and_conservative_drafts():
     assert rows[0].medication_name == "Thuoc A 500mg"
     assert rows[0].instructions == "Uống 1 viên sau ăn"
     assert "Bác sĩ" not in rows[1].instructions
-    assert "dose_amount" not in rows[0].model_dump()
+    assert rows[0].dose_amount == 1 and rows[0].dose_unit == "viên"
+    assert rows[0].administrations[0].time_of_day is None
     assert service.draft_rows("Không rõ thuốc\nUống theo chỉ định") == []
     rows = service.draft_rows("1. A 500mg\nUống 1 viên\n2. B\nUống 2 viên")
     assert rows[0].instructions == "Uống 1 viên"
@@ -62,7 +63,10 @@ Lời dặn bác sĩ:
     assert "X 20" in drafts[0].source_text
     assert drafts[3].instructions == "bôi ngoài da trong 7-10\nngày"
     assert "Tái khám" not in drafts[3].source_text
-    assert all("dose_amount" not in draft.model_dump() for draft in drafts)
+    assert drafts[0].dose_amount == 1
+    assert drafts[1].dose_amount is None
+    assert len(drafts[1].administrations) == 2
+    assert drafts[3].dose_amount is None and drafts[3].duration_days is None
 
 
 def test_unrelated_numbered_text_is_not_a_medication():
@@ -88,8 +92,8 @@ def test_deskew_preserves_blank_image_and_recovers_small_text_tilt():
     (0, b"x" * 50001, 422),
 ], ids=["process-failed", "blank", "too-long"])
 async def test_local_ocr_error_cases(monkeypatch, returncode, output, expected):
-    monkeypatch.setattr(service, "check_tesseract", lambda: ["tesseract"])
-    monkeypatch.setattr(service, "_run_tesseract", lambda *args: subprocess.CompletedProcess(args, returncode, output, b"private details"))
+    monkeypatch.setattr(service, "check_tesseract", lambda **kwargs: ["tesseract"])
+    monkeypatch.setattr(service, "_run_tesseract", lambda *args, **kwargs: subprocess.CompletedProcess(args, returncode, output, b"private details"))
     with pytest.raises(AppError) as error:
         await service.extract_prescription(png())
     assert error.value.status_code == expected
@@ -106,7 +110,9 @@ async def test_local_ocr_success_binary_input_and_timeout_cleanup(monkeypatch):
             return subprocess.CompletedProcess(arguments, 0, b"Languages (2):\nvie\neng\n", b"")
         assert arguments[1:3] == ["stdin", "stdout"]
         assert "vie+eng" in arguments
-        assert kwargs["input"] == png()
+        assert kwargs["input"].startswith(b"\x89PNG")
+        assert "tessedit_create_tsv=1" in arguments
+        assert "stdin" in arguments and "stdout" in arguments
         return subprocess.CompletedProcess(arguments, 0, "1. Thuốc A 500mg\nUống 1 viên sau ăn".encode(), b"")
     monkeypatch.setattr(service.subprocess, "run", success)
     result = await service.extract_prescription(png())
@@ -127,7 +133,7 @@ async def test_local_ocr_success_binary_input_and_timeout_cleanup(monkeypatch):
 
 
 async def test_busy_ocr_does_not_spawn_a_process(monkeypatch):
-    def unexpected():
+    def unexpected(**kwargs):
         pytest.fail("Busy OCR must not launch another process")
     monkeypatch.setattr(service, "check_tesseract", unexpected)
     service._ocr_slots.acquire()
@@ -143,7 +149,7 @@ async def test_busy_ocr_does_not_spawn_a_process(monkeypatch):
 
 def test_missing_language_requires_vietnamese_and_english(monkeypatch):
     monkeypatch.setattr(service, "tesseract_command", lambda: ["tesseract"])
-    monkeypatch.setattr(service, "_run_tesseract", lambda args: subprocess.CompletedProcess(args, 0, b"Languages (1):\neng\n", b""))
+    monkeypatch.setattr(service, "_run_tesseract", lambda args, **kwargs: subprocess.CompletedProcess(args, 0, b"Languages (1):\neng\n", b""))
     with pytest.raises(AppError) as error:
         service.check_tesseract()
     assert error.value.code == "OCR_LANGUAGES_MISSING"
@@ -213,9 +219,12 @@ async def test_real_ocr_then_explicit_schedule_creation(client, db_factory):
     assert len(result.json()["drafts"]) == 2
     async with db_factory() as db:
         assert await db.scalar(select(func.count()).select_from(MedicationSchedule)) == 0
-    # The user must supply these fields explicitly; the OCR response has none.
+    # OCR prefills only literal usage; the user still chooses exact clock/days.
     draft = result.json()["drafts"][0]
-    assert "dose_amount" not in draft and "time_of_day" not in draft
+    assert draft["dose_amount"] == 1 and draft["dose_unit"] == "viên"
+    assert draft["confidence"] is not None and draft["confidence"] > 80
+    assert draft["administrations"][0]["time_of_day"] is None
+    assert draft["days_of_week"] is None
     saved = await client.post(f"/api/v1/elders/{elder_id}/medication-schedules", json={
         "medication_name": draft["medication_name"], "instructions": draft["instructions"],
         "dose_amount": "1", "dose_unit": "viên", "time_of_day": "08:00:00",
