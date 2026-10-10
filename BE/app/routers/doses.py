@@ -1,5 +1,5 @@
 import uuid
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Query
@@ -12,6 +12,7 @@ from app.config import get_settings
 from app.dependencies import CurrentUser, DbSession, GroupCtx
 from app.errors import AppError, not_found
 from app.models import (
+    CareGroupMember,
     CaregiverAssignment,
     DoseOccurrence,
     DoseResponse,
@@ -33,6 +34,11 @@ def occurrence_out(occurrence: DoseOccurrence, *, can_respond: bool) -> DoseOccu
     schedule = occurrence.schedule
     medication = schedule.medication
     elder = medication.elder
+    response_out = None
+    if occurrence.response:
+        response_out = DoseResponseOut.model_validate(occurrence.response)
+        responder = occurrence.response.responded_by
+        response_out.responded_by_name = responder.full_name if responder else None
     return DoseOccurrenceOut(
         id=occurrence.id,
         elder_id=elder.id,
@@ -45,10 +51,14 @@ def occurrence_out(occurrence: DoseOccurrence, *, can_respond: bool) -> DoseOccu
         scheduled_for=occurrence.scheduled_for,
         status=occurrence.status,
         reminder_count=occurrence.reminder_count,
-        can_respond=can_respond,
-        response=DoseResponseOut.model_validate(occurrence.response)
-        if occurrence.response
-        else None,
+        can_respond=bool(
+            can_respond
+            and elder.is_active
+            and occurrence.response is None
+            and occurrence.status in {DoseStatus.SCHEDULED, DoseStatus.DUE, DoseStatus.UNCONFIRMED}
+            and aware_utc(occurrence.scheduled_for) <= datetime.now(UTC)
+        ),
+        response=response_out,
     )
 
 
@@ -57,7 +67,25 @@ def occurrence_load_options():
         selectinload(DoseOccurrence.schedule)
         .selectinload(MedicationSchedule.medication)
         .selectinload(Medication.elder),
-        selectinload(DoseOccurrence.response),
+        selectinload(DoseOccurrence.response).selectinload(DoseResponse.responded_by),
+    )
+
+
+def aware_utc(value: datetime) -> datetime:
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+
+
+def same_response(response: DoseResponse, payload: DoseResponseCreate, user_id: uuid.UUID) -> bool:
+    return bool(
+        response.responded_by_user_id == user_id
+        and response.response_type == payload.status
+        and response.reason == payload.reason_code
+        and response.notes == payload.note
+        and (
+            payload.administered_at is None
+            or response.administered_at is not None
+            and aware_utc(response.administered_at) == aware_utc(payload.administered_at)
+        )
     )
 
 
@@ -136,6 +164,7 @@ async def get_occurrence_for_group(
         .join(Medication, Medication.id == MedicationSchedule.medication_id)
         .join(ElderProfile, ElderProfile.id == Medication.elder_id)
         .where(DoseOccurrence.id == occurrence_id, ElderProfile.group_id == group_id)
+        .with_for_update(of=DoseOccurrence)
     )
     if not occurrence:
         raise not_found("Lần uống thuốc")
@@ -150,9 +179,20 @@ async def respond_to_occurrence(
     user: CurrentUser,
     db: DbSession,
 ) -> DoseOccurrenceOut:
+    if context.role == GroupRole.CAREGIVER:
+        membership = await db.scalar(select(CareGroupMember.id).where(
+            CareGroupMember.group_id == context.group_id,
+            CareGroupMember.user_id == user.id,
+            CareGroupMember.role == GroupRole.CAREGIVER,
+        ).with_for_update())
+        if not membership:
+            raise AppError(403, "DOSE_CONFIRMATION_DENIED", "Bạn không còn thuộc nhóm chăm sóc")
     occurrence = await get_occurrence_for_group(occurrence_id, context.group_id, db)
     schedule = occurrence.schedule
     elder = schedule.medication.elder
+
+    if not elder.is_active:
+        raise AppError(409, "ELDER_INACTIVE", "Hồ sơ đã ngừng theo dõi")
 
     if context.role == GroupRole.CAREGIVER:
         assignment = await db.scalar(
@@ -175,21 +215,13 @@ async def respond_to_occurrence(
         raise AppError(409, "DOSE_CANCELLED", "Lần uống này đã bị hủy")
     if occurrence.response:
         existing = occurrence.response
-        same = (
-            existing.responded_by_user_id == user.id
-            and existing.response_type == payload.status
-            and existing.reason == payload.reason_code
-            and existing.notes == payload.note
-        )
-        if same:
+        if same_response(existing, payload, user.id):
             return occurrence_out(occurrence, can_respond=True)
         raise AppError(409, "DOSE_ALREADY_RESPONDED", "Lần uống này đã được phản hồi")
 
     now = datetime.now(UTC)
-    scheduled_for = occurrence.scheduled_for
-    if scheduled_for.tzinfo is None:
-        scheduled_for = scheduled_for.replace(tzinfo=UTC)
-    if occurrence.status == DoseStatus.SCHEDULED and scheduled_for > now:
+    scheduled_for = aware_utc(occurrence.scheduled_for)
+    if scheduled_for > now:
         raise AppError(409, "DOSE_NOT_DUE", "Chưa đến giờ thực hiện lần uống này")
     if occurrence.status not in {
         DoseStatus.SCHEDULED,
@@ -197,6 +229,13 @@ async def respond_to_occurrence(
         DoseStatus.UNCONFIRMED,
     }:
         raise AppError(409, "DOSE_NOT_ACTIONABLE", "Lần uống này không còn chờ phản hồi")
+
+    if payload.administered_at is not None:
+        administered_at = aware_utc(payload.administered_at)
+        # Allow a small device-clock skew, but never an invented future dose
+        # or a timestamp before the scheduled occurrence being confirmed.
+        if administered_at < scheduled_for or administered_at > now + timedelta(seconds=60):
+            raise AppError(422, "INVALID_ADMINISTERED_TIME", "Thời điểm thực hiện phải từ giờ dự kiến đến hiện tại")
 
     response = DoseResponse(
         occurrence_id=occurrence.id,
@@ -242,8 +281,11 @@ async def respond_to_occurrence(
     except IntegrityError:
         await db.rollback()
         current = await get_occurrence_for_group(occurrence_id, context.group_id, db)
-        if current.response and current.response.responded_by_user_id == user.id:
+        if current.response and same_response(current.response, payload, user.id):
             return occurrence_out(current, can_respond=True)
         raise AppError(409, "DOSE_ALREADY_RESPONDED", "Lần uống này đã được phản hồi") from None
     await db.refresh(response)
+    # The authenticated account is already loaded; attach it explicitly after
+    # refresh so serialization never triggers implicit async relationship SQL.
+    response.responded_by = user
     return occurrence_out(occurrence, can_respond=True)

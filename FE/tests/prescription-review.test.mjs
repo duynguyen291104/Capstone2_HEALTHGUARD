@@ -1,17 +1,9 @@
 import assert from "node:assert/strict";
-import { webcrypto } from "node:crypto";
-import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import vm from "node:vm";
-import ts from "typescript";
+import { loadTs } from "./load-ts.mjs";
 
 // Execute the actual TS helper, with type-only imports removed; no extra runner.
-const compiled = ts.transpileModule(readFileSync(new URL("../lib/prescription-review.ts", import.meta.url), "utf8"), {
-  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
-}).outputText;
-const context = { exports: {}, crypto: webcrypto };
-vm.runInNewContext(compiled, context);
-const { createReviewMedication, endDateForDuration, reviewFieldHint, validateReviewMedication, scheduleFromReview } = context.exports;
+const { createReviewMedication, duplicateReviewSchedule, endDateForDuration, reviewFieldHint, validateReviewMedication, scheduleFromReview } = loadTs("lib/prescription-review.ts");
 
 function source(values = {}) {
   return { medication_name: "Fictional medicine A", instructions: "Demo only", source_text: "Demo", dose_amount: null, dose_unit: null, administrations: [], days_of_week: null, duration_days: null, confidence: 95, field_reviews: [], ...values };
@@ -35,6 +27,8 @@ test("duration derives inclusive end date and saved schedule retains every field
   assert.equal(endDateForDuration("2026-10-04", "1"), "2026-10-04");
   assert.equal(endDateForDuration("2026-10-04", "0"), "");
   assert.equal(endDateForDuration("2026-10-04", "7.5"), "");
+  assert.equal(endDateForDuration("2026-02-31", "7"), "");
+  assert.equal(endDateForDuration("9999-12-31", "7"), "");
   const row = createReviewMedication(source({
     dose_amount: 1, dose_unit: "ml", duration_days: 7, days_of_week: [0, 2, 4],
     administrations: [{ label: "08:00", dose_amount: 1, dose_unit: "ml", time_of_day: "08:00" }],
@@ -93,4 +87,16 @@ test("deleting an edited slot cannot clear another slot's uncertainty", () => {
   const remainingKey = `slot-${row.administrations[0].id}:dose_amount`;
   assert.equal(reviewFieldHint(row, remainingKey), "Kiểm tra từng liều");
   assert.ok(reviewFieldHint(row, firstKey, true), "an emptied edited field still needs a warning");
+});
+
+test("identical OCR rows cannot create duplicate reminders; different doses stay valid", () => {
+  const data = source({ dose_amount: 1, dose_unit: "viên", days_of_week: [0, 1], administrations: [{ label: "Sáng", dose_amount: 1, dose_unit: "viên", time_of_day: "08:00" }] });
+  const first = createReviewMedication(data, "first");
+  const second = createReviewMedication(data, "second");
+  assert.match(duplicateReviewSchedule([first, second], "2026-10-10", ""), /lặp lại/);
+  second.included = false;
+  assert.equal(duplicateReviewSchedule([first, second], "2026-10-10", ""), null);
+  second.included = true;
+  second.administrations[0].doseAmount = "2";
+  assert.equal(duplicateReviewSchedule([first, second], "2026-10-10", ""), null);
 });

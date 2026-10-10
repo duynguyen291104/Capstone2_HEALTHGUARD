@@ -1,20 +1,23 @@
 "use client";
 
-import { BellOff, BellRing, Check, Copy, MailPlus, ShieldCheck, Trash2, UserRoundCog } from "lucide-react";
+import { BellOff, BellRing, Check, Copy, MailPlus, RefreshCw, ShieldCheck, Trash2, UserRoundCog } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Button, EmptyState, ErrorNotice, Field, Modal, PageHeader, SelectField, SkeletonList, SuccessNotice } from "@/components/ui";
 import { careApi, eldersApi, getErrorMessage } from "@/lib/api";
 import type { CaregiverAssignment, CareGroupMember, Elder, Invitation, InvitationSummary } from "@/lib/types";
+import { useAuth } from "@/components/auth-provider";
 
-function InviteForm({ onCreated, onClose }: { onCreated: (invitation: Invitation) => void; onClose: () => void }) {
+function InviteForm({ onCreated, onClose, onBusyChange }: { onCreated: (invitation: Invitation) => void; onClose: () => void; onBusyChange: (busy: boolean) => void }) {
   const [email, setEmail] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
+    if (saving) return;
     if (!email.includes("@")) return setError("Hãy nhập email hợp lệ của người chăm sóc.");
     setSaving(true);
+    onBusyChange(true);
     setError("");
     try {
       onCreated(await careApi.invite(email.trim().toLowerCase()));
@@ -22,32 +25,36 @@ function InviteForm({ onCreated, onClose }: { onCreated: (invitation: Invitation
       setError(getErrorMessage(caught));
     } finally {
       setSaving(false);
+      onBusyChange(false);
     }
   }
 
   return (
     <form className="form-stack" onSubmit={submit}>
       {error ? <ErrorNotice message={error} /> : null}
-      <Field label="Email người chăm sóc" type="email" autoComplete="email" placeholder="co.lan@email.com" value={email} onChange={(event) => setEmail(event.target.value)} hint="Người được mời phải đăng ký bằng đúng email này." autoFocus />
+      <Field label="Email người chăm sóc" type="email" required disabled={saving} autoComplete="email" placeholder="co.lan@email.com" value={email} onChange={(event) => setEmail(event.target.value)} hint="Người được mời phải đăng ký bằng đúng email này." autoFocus />
       <div className="info-box"><ShieldCheck size={18} /><p>Lời mời chỉ dùng một lần và sẽ hết hạn. Sau khi tham gia, bạn vẫn cần phân công họ cho từng người cao tuổi.</p></div>
-      <div className="form-actions"><Button type="button" variant="secondary" onClick={onClose}>Hủy</Button><Button type="submit" loading={saving}>Tạo lời mời</Button></div>
+      <div className="form-actions"><Button type="button" variant="secondary" disabled={saving} onClick={onClose}>Hủy</Button><Button type="submit" loading={saving}>Tạo lời mời</Button></div>
     </form>
   );
 }
 
 function InviteResult({ invitation, onClose }: { invitation: Invitation; onClose: () => void }) {
   const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState("");
   const link = invitation.invitation_url || `${typeof window === "undefined" ? "" : window.location.origin}/tham-gia?token=${encodeURIComponent(invitation.invitation_token)}`;
 
   async function copy() {
-    await navigator.clipboard.writeText(link);
-    setCopied(true);
+    setCopyError("");
+    try { await navigator.clipboard.writeText(link); setCopied(true); }
+    catch { setCopyError("Trình duyệt không cho phép sao chép tự động. Hãy chọn và sao chép liên kết bên trên."); }
   }
 
   return (
     <div className="form-stack">
       <SuccessNotice message={`Đã tạo lời mời cho ${invitation.email}`} />
       <div className="invite-link"><span>{link}</span><Button type="button" variant="secondary" onClick={copy}>{copied ? <Check size={17} /> : <Copy size={17} />}{copied ? "Đã sao chép" : "Sao chép"}</Button></div>
+      {copyError ? <ErrorNotice message={copyError} /> : null}
       <p className="muted">Gửi liên kết này trực tiếp cho đúng người chăm sóc. Không đăng công khai liên kết.</p>
       <Button type="button" onClick={onClose}>Hoàn tất</Button>
     </div>
@@ -87,7 +94,7 @@ function AssignmentControl({
   }
 
   async function assign() {
-    if (!elderId) return;
+    if (!elderId || saving) return;
     setSaving(true);
     setMessage("");
     setError("");
@@ -108,7 +115,7 @@ function AssignmentControl({
   }
 
   async function unassign() {
-    if (!currentAssignment || !window.confirm(`Hủy phân công ${member.full_name} khỏi hồ sơ đã chọn?`)) return;
+    if (saving || !currentAssignment || !window.confirm(`Hủy phân công ${member.full_name} khỏi hồ sơ đã chọn?`)) return;
     setSaving(true);
     setMessage("");
     setError("");
@@ -127,10 +134,10 @@ function AssignmentControl({
 
   return (
     <div className="assignment-control">
-      <SelectField label="Phân công chăm sóc" value={elderId} onChange={(event) => selectElder(event.target.value)}>
+      <SelectField label="Phân công chăm sóc" disabled={saving} value={elderId} onChange={(event) => selectElder(event.target.value)}>
         {elders.map((elder) => <option key={elder.id} value={elder.id}>{elder.full_name}</option>)}
       </SelectField>
-      <fieldset className="permission-picker">
+      <fieldset className="permission-picker" disabled={saving}>
         <legend>Quyền được cấp</legend>
         <label><input type="checkbox" checked={canViewMedications} onChange={(event) => { setCanViewMedications(event.target.checked); if (!event.target.checked) setCanConfirmDoses(false); }} /> Xem lịch thuốc</label>
         <label><input type="checkbox" checked={canConfirmDoses} onChange={(event) => { setCanConfirmDoses(event.target.checked); if (event.target.checked) setCanViewMedications(true); }} /> Xác nhận cho uống</label>
@@ -147,6 +154,8 @@ function AssignmentControl({
 }
 
 export function CaregiversPage() {
+  const { user } = useAuth();
+  const isOwner = user?.current_group?.role === "OWNER";
   const [members, setMembers] = useState<CareGroupMember[]>([]);
   const [elders, setElders] = useState<Elder[]>([]);
   const [assignments, setAssignments] = useState<CaregiverAssignment[]>([]);
@@ -157,6 +166,8 @@ export function CaregiversPage() {
   const [invitation, setInvitation] = useState<Invitation | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
   const [revokingInvitation, setRevokingInvitation] = useState<string | null>(null);
+  const [reload, setReload] = useState(0);
+  const [inviteBusy, setInviteBusy] = useState(false);
 
   const caregivers = useMemo(() => members.filter((member) => member.role === "CAREGIVER"), [members]);
   const pendingInvitations = useMemo(
@@ -165,6 +176,7 @@ export function CaregiversPage() {
   );
 
   useEffect(() => {
+    if (!isOwner) return;
     let active = true;
     Promise.all([careApi.members(), eldersApi.list(), careApi.invitations()])
       .then(async ([memberList, elderList, invitationList]) => {
@@ -182,7 +194,9 @@ export function CaregiversPage() {
       .catch((caught) => { if (active) setError(getErrorMessage(caught)); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, []);
+  }, [isOwner, reload]);
+
+  function reloadPage() { setLoading(true); setError(""); setReload(value => value + 1); }
 
   async function remove(member: CareGroupMember) {
     if (!window.confirm(`Thu hồi quyền của ${member.full_name} khỏi nhóm chăm sóc?`)) return;
@@ -191,6 +205,7 @@ export function CaregiversPage() {
     try {
       await careApi.removeMember(member.user_id);
       setMembers((current) => current.filter((item) => item.user_id !== member.user_id));
+      setAssignments(current => current.filter(item => item.caregiver_user_id !== member.user_id));
     } catch (caught) {
       setError(getErrorMessage(caught));
     } finally {
@@ -217,6 +232,7 @@ export function CaregiversPage() {
   }
 
   function closeInvite() {
+    if (inviteBusy) return;
     setInviteOpen(false);
     setInvitation(null);
   }
@@ -244,13 +260,15 @@ export function CaregiversPage() {
     });
   }
 
+  if (!isOwner) return <><PageHeader title="Người chăm sóc" description="Thành viên và phân công của nhóm." /><EmptyState title="Chỉ chủ gia đình quản lý thành viên" description="Bạn có thể xem các hồ sơ và lịch thuốc đã được phân công trong menu." /></>;
+
   return (
     <>
       <PageHeader
         eyebrow="Thành viên & quyền"
         title="Người chăm sóc"
         description="Mời người chăm sóc bằng tài khoản riêng rồi phân công đúng hồ sơ họ cần hỗ trợ."
-        action={<Button onClick={() => setInviteOpen(true)}><MailPlus size={18} /> Mời người chăm sóc</Button>}
+        action={<div className="form-actions"><Button type="button" variant="secondary" loading={loading} onClick={reloadPage}><RefreshCw size={17} /> Làm mới</Button><Button onClick={() => setInviteOpen(true)}><MailPlus size={18} /> Mời người chăm sóc</Button></div>}
       />
       <div className="info-strip"><ShieldCheck size={19} /><p>Mỗi người dùng tài khoản riêng để hệ thống ghi nhận chính xác ai đã thao tác. Bạn có thể thu hồi quyền bất cứ lúc nào.</p></div>
       {error ? <ErrorNotice message={error} /> : null}
@@ -264,14 +282,14 @@ export function CaregiversPage() {
             {pendingInvitations.map((item) => (
               <article key={item.id}>
                 <span><MailPlus size={18} aria-hidden="true" /></span>
-                <div><strong>{item.email}</strong><small>Hết hạn {new Intl.DateTimeFormat("vi-VN", { dateStyle: "short", timeStyle: "short" }).format(new Date(item.expires_at))}</small></div>
+                <div><strong>{item.email}</strong><small>Hết hạn {new Intl.DateTimeFormat("vi-VN", { dateStyle: "short", timeStyle: "short", timeZone: "Asia/Ho_Chi_Minh" }).format(new Date(item.expires_at))}</small></div>
                 <Button type="button" variant="ghost" loading={revokingInvitation === item.id} onClick={() => revokeInvitation(item)}>Thu hồi</Button>
               </article>
             ))}
           </div>
         </section>
       ) : null}
-      {loading ? <SkeletonList rows={2} /> : caregivers.length === 0 ? (
+      {loading ? <SkeletonList rows={2} /> : error && !members.length ? <Button type="button" onClick={reloadPage}>Tải lại thành viên</Button> : caregivers.length === 0 ? (
         <EmptyState title="Chưa có người chăm sóc" description="Tạo lời mời và gửi liên kết cho người được thuê chăm sóc bố mẹ." action={<Button onClick={() => setInviteOpen(true)}><MailPlus size={18} /> Tạo lời mời</Button>} />
       ) : (
         <div className="member-list">
@@ -298,8 +316,8 @@ export function CaregiversPage() {
         </div>
       )}
       {inviteOpen ? (
-        <Modal title={invitation ? "Gửi liên kết mời" : "Mời người chăm sóc"} description={invitation ? "Liên kết chỉ dành cho đúng email đã nhập." : "Người chăm sóc sẽ tự tạo mật khẩu cho tài khoản của họ."} onClose={closeInvite}>
-          {invitation ? <InviteResult invitation={invitation} onClose={closeInvite} /> : <InviteForm onCreated={invitationCreated} onClose={closeInvite} />}
+        <Modal dismissible={!inviteBusy} title={invitation ? "Gửi liên kết mời" : "Mời người chăm sóc"} description={invitation ? "Liên kết chỉ dành cho đúng email đã nhập." : "Người chăm sóc sẽ tự tạo mật khẩu cho tài khoản của họ."} onClose={closeInvite}>
+          {invitation ? <InviteResult invitation={invitation} onClose={closeInvite} /> : <InviteForm onCreated={invitationCreated} onBusyChange={setInviteBusy} onClose={closeInvite} />}
         </Modal>
       ) : null}
     </>

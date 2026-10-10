@@ -1,10 +1,12 @@
 "use client";
 
 import { AlertTriangle, CalendarDays, Check, CheckCircle2, Clock3, Pill, RefreshCw, XCircle } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button, EmptyState, ErrorNotice, Modal, PageHeader, SelectField, SkeletonList, TextareaField } from "@/components/ui";
 import { dosesApi, getErrorMessage } from "@/lib/api";
 import type { DoseOccurrence, DoseStatus } from "@/lib/types";
+import { isCalendarDate, RequestSequence, responseActorName } from "@/lib/workflow";
+import { useAuth } from "@/components/auth-provider";
 
 const statusLabels: Record<DoseStatus, string> = {
   SCHEDULED: "Sắp tới",
@@ -39,7 +41,7 @@ function reasonLabel(reason: string) {
   return reasonOptions.find((option) => option.value === reason)?.label ?? reason;
 }
 
-function CannotAdministerForm({ dose, onSaved, onClose }: { dose: DoseOccurrence; onSaved: (dose: DoseOccurrence) => void; onClose: () => void }) {
+function CannotAdministerForm({ dose, onSaved, onClose, onBusyChange }: { dose: DoseOccurrence; onSaved: (dose: DoseOccurrence) => void; onClose: () => void; onBusyChange: (busy: boolean) => void }) {
   const [reason, setReason] = useState(reasonOptions[0].value);
   const [note, setNote] = useState("");
   const [error, setError] = useState("");
@@ -47,7 +49,11 @@ function CannotAdministerForm({ dose, onSaved, onClose }: { dose: DoseOccurrence
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
+    if (saving) return;
+    if (note.length > 2000) return setError("Ghi chú tối đa 2.000 ký tự.");
+    if (reason === "OTHER" && !note.trim()) return setError("Hãy ghi rõ lý do khác để chủ gia đình kiểm tra.");
     setSaving(true);
+    onBusyChange(true);
     setError("");
     try {
       onSaved(await dosesApi.respond(dose.id, { status: "CANNOT_ADMINISTER", reason_code: reason, note: note.trim() || null }));
@@ -55,22 +61,24 @@ function CannotAdministerForm({ dose, onSaved, onClose }: { dose: DoseOccurrence
       setError(getErrorMessage(caught));
     } finally {
       setSaving(false);
+      onBusyChange(false);
     }
   }
 
   return (
     <form className="form-stack" onSubmit={submit}>
       {error ? <ErrorNotice message={error} /> : null}
-      <SelectField label="Lý do" value={reason} onChange={(event) => setReason(event.target.value)}>
+      <SelectField label="Lý do" disabled={saving} value={reason} onChange={(event) => setReason(event.target.value)}>
         {reasonOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
       </SelectField>
-      <TextareaField label="Ghi chú thêm" value={note} onChange={(event) => setNote(event.target.value)} placeholder="Thông tin giúp chủ gia đình kiểm tra lại…" />
-      <div className="form-actions"><Button type="button" variant="secondary" onClick={onClose}>Hủy</Button><Button type="submit" loading={saving}>Gửi phản hồi</Button></div>
+      <TextareaField label="Ghi chú thêm" maxLength={2000} required={reason === "OTHER"} disabled={saving} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Thông tin giúp chủ gia đình kiểm tra lại…" />
+      <div className="form-actions"><Button type="button" variant="secondary" disabled={saving} onClick={onClose}>Hủy</Button><Button type="submit" loading={saving}>Gửi phản hồi</Button></div>
     </form>
   );
 }
 
 function DoseCard({ dose, now, onUpdated, onCannot, highlighted }: { dose: DoseOccurrence; now: number | null; onUpdated: (dose: DoseOccurrence) => void; onCannot: () => void; highlighted?: boolean }) {
+  const { user } = useAuth();
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState("");
   const scheduledFor = new Date(dose.scheduled_for).getTime();
@@ -81,6 +89,7 @@ function DoseCard({ dose, now, onUpdated, onCannot, highlighted }: { dose: DoseO
   );
 
   async function confirm() {
+    if (confirming || !actionable) return;
     setConfirming(true);
     setError("");
     try {
@@ -107,6 +116,7 @@ function DoseCard({ dose, now, onUpdated, onCannot, highlighted }: { dose: DoseO
         {dose.status === "ADMINISTERED" ? <CheckCircle2 size={19} /> : dose.status === "CANNOT_ADMINISTER" || dose.status === "UNCONFIRMED" ? <AlertTriangle size={19} /> : <Clock3 size={19} />}
         <span>
           <strong>{statusLabels[dose.status]}</strong>
+          {dose.response ? <small style={{ overflowWrap: "anywhere" }}>Xác nhận bởi {responseActorName(dose.response, user)}</small> : null}
           {dose.response?.responded_at ? <small>Lúc {timeOf(dose.response.responded_at)}</small> : dose.status === "UNCONFIRMED" ? <small>Cần liên hệ để kiểm tra</small> : null}
           {dose.response?.reason ? <small>Lý do: {reasonLabel(dose.response.reason)}</small> : null}
           {dose.response?.notes ? <small>Ghi chú: {dose.response.notes}</small> : null}
@@ -115,7 +125,7 @@ function DoseCard({ dose, now, onUpdated, onCannot, highlighted }: { dose: DoseO
       {actionable ? (
         <div className="dose-card__actions">
           <Button type="button" loading={confirming} onClick={confirm}><Check size={18} /> Đã cho uống</Button>
-          <Button type="button" variant="secondary" onClick={onCannot}><XCircle size={18} /> Chưa thể cho uống</Button>
+          <Button type="button" variant="secondary" disabled={confirming} onClick={onCannot}><XCircle size={18} /> Chưa thể cho uống</Button>
         </div>
       ) : null}
       {error ? <div className="dose-card__error"><ErrorNotice message={error} /></div> : null}
@@ -124,12 +134,15 @@ function DoseCard({ dose, now, onUpdated, onCannot, highlighted }: { dose: DoseO
 }
 
 export function TodayPage({ highlightedId = "", initialDate }: { highlightedId?: string; initialDate?: string }) {
-  const [date, setDate] = useState(() => initialDate ?? localDate());
+  const [date, setDate] = useState(() => initialDate && isCalendarDate(initialDate) ? initialDate : localDate());
   const [doses, setDoses] = useState<DoseOccurrence[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [cannotDose, setCannotDose] = useState<DoseOccurrence | null>(null);
   const [now, setNow] = useState<number | null>(null);
+  const requests = useRef(new RequestSequence());
+  const selectedDate = useRef(date);
+  const [responseBusy, setResponseBusy] = useState(false);
 
   useEffect(() => {
     const initialTimer = window.setTimeout(() => setNow(Date.now()), 0);
@@ -140,30 +153,44 @@ export function TodayPage({ highlightedId = "", initialDate }: { highlightedId?:
     };
   }, []);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (quiet = false) => {
+    const version = requests.current.start();
+    if (!quiet) setLoading(true);
     setError("");
     try {
       const items = await dosesApi.byDate(date);
+      if (!requests.current.isCurrent(version)) return;
       setDoses([...items].sort((a, b) => new Date(a.scheduled_for).getTime() - new Date(b.scheduled_for).getTime()));
     } catch (caught) {
-      setError(getErrorMessage(caught));
+      if (requests.current.isCurrent(version)) setError(getErrorMessage(caught));
     } finally {
-      setLoading(false);
+      if (requests.current.isCurrent(version)) setLoading(false);
     }
   }, [date]);
 
   useEffect(() => {
-    let active = true;
-    dosesApi.byDate(date)
-      .then((items) => {
-        if (!active) return;
-        setDoses([...items].sort((a, b) => new Date(a.scheduled_for).getTime() - new Date(b.scheduled_for).getTime()));
-      })
-      .catch((caught) => { if (active) setError(getErrorMessage(caught)); })
-      .finally(() => { if (active) setLoading(false); });
-    return () => { active = false; };
-  }, [date]);
+    const tracker = requests.current;
+    const timer = window.setTimeout(() => { void load(); }, 0);
+    const interval = window.setInterval(() => { if (document.visibilityState === "visible") void load(true); }, 30_000);
+    const focused = () => { void load(true); };
+    window.addEventListener("focus", focused);
+    return () => {
+      tracker.invalidate();
+      window.clearTimeout(timer); window.clearInterval(interval);
+      window.removeEventListener("focus", focused);
+    };
+  }, [load]);
+
+  useEffect(() => {
+    if (!initialDate || !isCalendarDate(initialDate)) return;
+    const timer = window.setTimeout(() => {
+      if (selectedDate.current === initialDate) return;
+      selectedDate.current = initialDate;
+      requests.current.invalidate();
+      setDate(initialDate); setCannotDose(null); setError("");
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [initialDate]);
 
   useEffect(() => {
     if (!highlightedId || loading) return;
@@ -177,15 +204,19 @@ export function TodayPage({ highlightedId = "", initialDate }: { highlightedId?:
   const dateLabel = useMemo(() => longDate(date), [date]);
 
   function update(updated: DoseOccurrence) {
+    const responseDate = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh" }).format(new Date(updated.scheduled_for));
+    if (responseDate !== selectedDate.current) return;
+    requests.current.invalidate();
+    setLoading(false);
     setDoses((current) => current.map((dose) => dose.id === updated.id ? updated : dose));
-    setCannotDose(null);
+    setCannotDose(current => current?.id === updated.id ? null : current);
   }
 
   return (
     <>
-      <PageHeader eyebrow="Danh sách cần thực hiện" title="Lịch hôm nay" description={`Các lần uống thuốc của ${dateLabel}.`} action={<Button type="button" variant="secondary" onClick={load} loading={loading}><RefreshCw size={17} /> Làm mới</Button>} />
+      <PageHeader eyebrow="Danh sách cần thực hiện" title="Lịch hôm nay" description={`Các lần uống thuốc của ${dateLabel}.`} action={<Button type="button" variant="secondary" onClick={() => { void load(); }} loading={loading}><RefreshCw size={17} /> Làm mới</Button>} />
       <div className="today-toolbar">
-        <label className="date-control"><CalendarDays size={18} /><span>Chọn ngày</span><input type="date" value={date} onChange={(event) => { setLoading(true); setDoses([]); setDate(event.target.value); }} /></label>
+        <label className="date-control"><CalendarDays size={18} /><span>Chọn ngày</span><input type="date" disabled={responseBusy} required value={date} onChange={(event) => { const next = event.target.value; if (!isCalendarDate(next) || next === selectedDate.current) return; selectedDate.current = next; requests.current.invalidate(); setLoading(true); setError(""); setCannotDose(null); setDoses([]); setDate(next); }} /></label>
         <p><AlertTriangle size={18} /> “Đã cho uống” là xác nhận của người thao tác. Khi không chắc chắn, hãy kiểm tra trực tiếp.</p>
       </div>
       {error ? <ErrorNotice message={error} /> : null}
@@ -197,8 +228,8 @@ export function TodayPage({ highlightedId = "", initialDate }: { highlightedId?:
         </div>
       )}
       {cannotDose ? (
-        <Modal title="Chưa thể cho uống" description={`${cannotDose.medication_name} · ${cannotDose.elder_name} · ${timeOf(cannotDose.scheduled_for)}`} onClose={() => setCannotDose(null)}>
-          <CannotAdministerForm dose={cannotDose} onSaved={update} onClose={() => setCannotDose(null)} />
+        <Modal dismissible={!responseBusy} title="Chưa thể cho uống" description={`${cannotDose.medication_name} · ${cannotDose.elder_name} · ${timeOf(cannotDose.scheduled_for)}`} onClose={() => { if (!responseBusy) setCannotDose(null); }}>
+          <CannotAdministerForm dose={cannotDose} onSaved={update} onBusyChange={setResponseBusy} onClose={() => { if (!responseBusy) setCannotDose(null); }} />
         </Modal>
       ) : null}
     </>

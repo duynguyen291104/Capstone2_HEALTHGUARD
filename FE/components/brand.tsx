@@ -7,7 +7,6 @@ export function Brand({ href = "/" }: { href?: string }) {
       <span className="brand__mark"><HeartPulse size={22} strokeWidth={2.5} aria-hidden="true" /></span>
       <span>
         <strong>HealthGuard</strong>
-        <small>Chăm sóc đúng lúc</small>
       </span>
     </Link>
   );

@@ -25,23 +25,35 @@ type AuthResponse = {
   default_group_id: string | null;
 };
 
+export const SESSION_EXPIRED_EVENT = "healthguard:session-expired";
+export const GROUP_ACCESS_CHANGED_EVENT = "healthguard:group-access-changed";
+let authVersion = 0;
+export function markAuthChanged(): void { authVersion += 1; }
+
+export function storedGroupId(): string | null {
+  try { return typeof window === "undefined" ? null : window.localStorage.getItem("healthguard_group_id"); }
+  catch { return null; }
+}
+
+export function storeGroupId(value: string | null): void {
+  try {
+    if (typeof window === "undefined") return;
+    if (value) window.localStorage.setItem("healthguard_group_id", value);
+    else window.localStorage.removeItem("healthguard_group_id");
+  } catch { /* Cookie authentication still works when browser storage is disabled. */ }
+}
+
 function normalizeAuth(payload: AuthResponse): CurrentUser {
   const groups = payload.groups.map((item) => ({
     care_group_id: item.id,
     care_group_name: item.name,
     role: item.role,
   }));
-  const storedGroupId = typeof window !== "undefined"
-    ? window.localStorage.getItem("healthguard_group_id")
-    : null;
-  const group = groups.find((item) => item.care_group_id === storedGroupId)
+  const savedGroupId = storedGroupId();
+  const group = groups.find((item) => item.care_group_id === savedGroupId)
     ?? groups.find((item) => item.care_group_id === payload.default_group_id)
     ?? groups[0]
     ?? null;
-  if (typeof window !== "undefined") {
-    if (group) window.localStorage.setItem("healthguard_group_id", group.care_group_id);
-    else window.localStorage.removeItem("healthguard_group_id");
-  }
   return {
     ...payload.user,
     groups,
@@ -68,28 +80,31 @@ type RequestOptions = Omit<RequestInit, "body"> & {
 };
 
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  const requestAuthVersion = authVersion;
   const headers = new Headers(options.headers);
   const isFile = options.body instanceof Blob;
   if (options.body !== undefined) headers.set("Content-Type", isFile ? (options.body as Blob).type || "application/octet-stream" : "application/json");
   if (typeof window !== "undefined") {
-    const groupId = window.localStorage.getItem("healthguard_group_id");
+    const groupId = storedGroupId();
     if (groupId) headers.set("X-Care-Group-ID", groupId);
   }
 
   let response: Response;
+  const fetchOptions: RequestInit = {
+    ...options, headers, credentials: "include", cache: "no-store",
+    body: options.body === undefined ? undefined : isFile ? options.body as Blob : JSON.stringify(options.body),
+  };
   try {
-    response = await fetch(`${API_URL}${path}`, {
-      ...options,
-      headers,
-      credentials: "include",
-      body: options.body === undefined ? undefined : isFile ? options.body as Blob : JSON.stringify(options.body),
-    });
-  } catch {
-    throw new ApiError(
-      "Không thể kết nối máy chủ. Hãy kiểm tra backend đang chạy.",
-      0,
-      "NETWORK_ERROR",
-    );
+    response = await fetch(`${API_URL}${path}`, fetchOptions);
+  } catch (caught) {
+    const transientRead = (options.method ?? "GET").toUpperCase() === "GET"
+      && !options.signal?.aborted && caught instanceof TypeError;
+    if (transientRead) {
+      await new Promise(resolve => setTimeout(resolve, 150));
+      if (options.signal?.aborted) throw caught;
+      try { response = await fetch(`${API_URL}${path}`, fetchOptions); }
+      catch { throw new ApiError("Không thể kết nối máy chủ. Hãy kiểm tra backend đang chạy.", 0, "NETWORK_ERROR"); }
+    } else throw new ApiError("Không thể kết nối máy chủ. Hãy kiểm tra backend đang chạy.", 0, "NETWORK_ERROR");
   }
 
   if (!response.ok) {
@@ -102,6 +117,14 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     const detail = Array.isArray(payload?.detail)
       ? payload.detail.map((item) => item.msg).filter(Boolean).join(", ")
       : payload?.detail;
+    if (typeof window !== "undefined" && requestAuthVersion === authVersion) {
+      if (response.status === 401 && ["NOT_AUTHENTICATED", "INVALID_SESSION"].includes(payload?.error?.code ?? "")) {
+        storeGroupId(null);
+        window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
+      } else if (response.status === 403 && payload?.error?.code === "GROUP_ACCESS_DENIED") {
+        window.dispatchEvent(new Event(GROUP_ACCESS_CHANGED_EVENT));
+      }
+    }
     throw new ApiError(
       payload?.error?.message ?? detail ?? "Yêu cầu chưa thực hiện được.",
       response.status,

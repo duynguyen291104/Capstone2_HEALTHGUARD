@@ -11,10 +11,11 @@ import { useAuth } from "@/components/auth-provider";
 import { Button, ErrorNotice, Field } from "@/components/ui";
 import { authApi, getErrorMessage } from "@/lib/api";
 import type { InvitationInspection } from "@/lib/types";
+import { safeNextPath } from "@/lib/workflow";
 
 const loginSchema = z.object({
   email: z.string().trim().email("Email chưa đúng định dạng."),
-  password: z.string().min(1, "Hãy nhập mật khẩu."),
+  password: z.string().min(1, "Hãy nhập mật khẩu.").max(128, "Mật khẩu tối đa 128 ký tự."),
 });
 
 type LoginValues = z.infer<typeof loginSchema>;
@@ -33,9 +34,7 @@ export function LoginForm({ nextPath = "" }: { nextPath?: string }) {
     try {
       const user = await authApi.login(values);
       setUser(user);
-      const safeNext = nextPath.startsWith("/") && !nextPath.startsWith("//")
-        ? nextPath
-        : "";
+      const safeNext = safeNextPath(nextPath);
       router.replace(safeNext || (user.current_group ? "/hom-nay" : "/tao-nhom"));
     } catch (error) {
       setServerError(getErrorMessage(error));
@@ -67,9 +66,9 @@ export function LoginForm({ nextPath = "" }: { nextPath?: string }) {
 }
 
 const registrationFields = {
-  full_name: z.string().trim().min(2, "Hãy nhập họ tên."),
+  full_name: z.string().trim().min(1, "Hãy nhập họ tên.").max(150, "Họ tên tối đa 150 ký tự."),
   email: z.string().trim().email("Email chưa đúng định dạng."),
-  password: z.string().min(10, "Mật khẩu cần ít nhất 10 ký tự."),
+  password: z.string().min(10, "Mật khẩu cần ít nhất 10 ký tự.").max(128, "Mật khẩu tối đa 128 ký tự."),
   confirm_password: z.string(),
 };
 
@@ -133,13 +132,18 @@ const caregiverSchema = z.object(registrationFields).refine(
 type CaregiverValues = z.infer<typeof caregiverSchema>;
 
 export function CaregiverRegisterForm({ token }: { token: string }) {
+  return <CaregiverInvitationForm key={token} token={token} />;
+}
+
+function CaregiverInvitationForm({ token }: { token: string }) {
   const router = useRouter();
-  const { user, setUser } = useAuth();
+  const { user, loading: authLoading, setUser } = useAuth();
   const [serverError, setServerError] = useState("");
   const [invitation, setInvitation] = useState<InvitationInspection | null>(null);
   const [inspectionError, setInspectionError] = useState("");
   const [inspecting, setInspecting] = useState(Boolean(token));
   const [accepting, setAccepting] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
   const { register, handleSubmit, setValue, formState: { errors, isSubmitting } } = useForm<CaregiverValues>({ resolver: zodResolver(caregiverSchema) });
 
   useEffect(() => {
@@ -152,6 +156,7 @@ export function CaregiverRegisterForm({ token }: { token: string }) {
     authApi.inspectInvitation(token)
       .then((result) => {
         if (!active) return;
+        if (!result.valid) { setInspectionError("Lời mời đã hết hạn hoặc bị thu hồi. Hãy nhờ chủ nhóm tạo lời mời mới."); return; }
         setInvitation(result);
         setValue("email", result.email, { shouldValidate: true });
       })
@@ -183,7 +188,7 @@ export function CaregiverRegisterForm({ token }: { token: string }) {
   }
 
   async function acceptWithCurrentAccount() {
-    if (!invitation || !token || !user) return;
+    if (!invitation || !token || !user || accepting) return;
     setAccepting(true);
     setServerError("");
     try {
@@ -198,6 +203,14 @@ export function CaregiverRegisterForm({ token }: { token: string }) {
     }
   }
 
+  async function signOut() {
+    if (signingOut) return;
+    setSigningOut(true); setServerError("");
+    try { await authApi.logout(); setUser(null); }
+    catch (caught) { setServerError(getErrorMessage(caught)); }
+    finally { setSigningOut(false); }
+  }
+
   return (
     <div className="auth-card auth-card--wide">
       <div className="auth-heading">
@@ -206,7 +219,7 @@ export function CaregiverRegisterForm({ token }: { token: string }) {
         <p>Hệ thống kiểm tra lời mời trước khi cho phép bạn tạo tài khoản.</p>
       </div>
       {!token ? <ErrorNotice message="Liên kết đang thiếu mã mời. Hãy mở lại liên kết do chủ gia đình gửi." /> : null}
-      {inspecting ? (
+      {inspecting || authLoading ? (
         <div className="info-box" role="status"><LoaderCircle className="spin" size={18} /><p>Đang kiểm tra lời mời...</p></div>
       ) : null}
       {inspectionError ? <ErrorNotice message={inspectionError} /> : null}
@@ -215,19 +228,19 @@ export function CaregiverRegisterForm({ token }: { token: string }) {
           <Mail size={18} />
           <p>
             Bạn được mời vào nhóm <strong>{invitation.care_group_name}</strong> bằng email <strong>{invitation.email}</strong>.
-            Lời mời hết hạn lúc {new Intl.DateTimeFormat("vi-VN", { dateStyle: "short", timeStyle: "short" }).format(new Date(invitation.expires_at))}.
+            Lời mời hết hạn lúc {new Intl.DateTimeFormat("vi-VN", { dateStyle: "short", timeStyle: "short", timeZone: "Asia/Ho_Chi_Minh" }).format(new Date(invitation.expires_at))}.
           </p>
         </div>
       ) : null}
       {serverError ? <ErrorNotice message={serverError} /> : null}
-      {invitation && user ? (
+      {invitation && !authLoading && user ? (
         <div className="form-stack">
           <div className="info-box">
             <Mail size={18} />
             <p>Bạn đang đăng nhập bằng <strong>{user.email}</strong>.</p>
           </div>
           {user.email.toLowerCase() !== invitation.email.toLowerCase() ? (
-            <ErrorNotice message="Email tài khoản đang đăng nhập không khớp email được mời. Hãy đăng xuất và đăng nhập đúng tài khoản." />
+            <><ErrorNotice message="Email tài khoản đang đăng nhập không khớp email được mời. Hãy đăng xuất và đăng nhập đúng tài khoản." /><Button type="button" variant="secondary" loading={signingOut} onClick={signOut}>Đăng xuất để dùng đúng tài khoản</Button></>
           ) : user.current_group ? (
             <ErrorNotice message="Tài khoản này đã thuộc một nhóm chăm sóc. Mỗi tài khoản hiện chỉ tham gia một nhóm." />
           ) : (
@@ -236,7 +249,7 @@ export function CaregiverRegisterForm({ token }: { token: string }) {
             </Button>
           )}
         </div>
-      ) : invitation ? (
+      ) : invitation && !authLoading ? (
         <form className="form-grid" onSubmit={handleSubmit(onSubmit)} noValidate>
           <Field label="Họ và tên" autoComplete="name" error={errors.full_name?.message} {...register("full_name")} />
           <Field label="Email được mời" type="email" autoComplete="email" readOnly hint="Email này được khóa theo lời mời của chủ gia đình." error={errors.email?.message} {...register("email")} />

@@ -1,4 +1,5 @@
 import type { MedicationSchedule, PrescriptionDraft } from "@/lib/types";
+import { createRequestKey, isCalendarDate } from "./workflow";
 
 export type ReviewAdministration = {
   id: string;
@@ -43,7 +44,7 @@ export function createReviewMedication(draft: PrescriptionDraft | null, id: stri
     instructions: draft?.instructions ?? "",
     administrations: administrations.map((item, index) => ({
       id: `${id}-${index}`,
-      requestKey: crypto.randomUUID(),
+      requestKey: createRequestKey(),
       label: item.label,
       doseAmount: (item.dose_amount ?? draft?.dose_amount) == null ? "" : String(item.dose_amount ?? draft?.dose_amount),
       doseUnit: item.dose_unit ?? draft?.dose_unit ?? "",
@@ -59,22 +60,23 @@ export function createReviewMedication(draft: PrescriptionDraft | null, id: stri
 
 export function endDateForDuration(startDate: string, durationDays: string): string {
   const days = Number(durationDays);
-  if (!startDate || !Number.isInteger(days) || days < 1 || days > 3650) return "";
+  if (!isCalendarDate(startDate) || !Number.isInteger(days) || days < 1 || days > 3650) return "";
   const value = new Date(`${startDate}T00:00:00Z`);
   if (!Number.isFinite(value.getTime())) return "";
   value.setUTCDate(value.getUTCDate() + days - 1);
-  return value.toISOString().slice(0, 10);
+  const result = value.toISOString().slice(0, 10);
+  return isCalendarDate(result) ? result : "";
 }
 
 export function validateReviewMedication(row: ReviewMedication, startDate: string): string | null {
   if (!row.medicationName.trim()) return "Điền tên thuốc.";
   if (row.medicationName.trim().length > 200) return "Tên thuốc tối đa 200 ký tự.";
-  if (!startDate) return "Chọn ngày bắt đầu.";
+  if (!isCalendarDate(startDate)) return "Chọn ngày bắt đầu hợp lệ.";
   if (!row.days.length) return "Chọn ít nhất một ngày dùng trong tuần.";
   if (!row.administrations.length) return "Thêm ít nhất một lần dùng.";
   if (row.instructions.length > 3000) return "Hướng dẫn tối đa 3.000 ký tự.";
   if (row.durationDays && !endDateForDuration(startDate, row.durationDays)) return "Số ngày dùng phải là số nguyên từ 1 đến 3.650.";
-  if (row.endDate && row.endDate < startDate) return "Ngày kết thúc không được trước ngày bắt đầu.";
+  if (row.endDate && (!isCalendarDate(row.endDate) || row.endDate < startDate)) return "Ngày kết thúc phải hợp lệ và không trước ngày bắt đầu.";
   const times = new Set<string>();
   for (const slot of row.administrations) {
     const amount = Number(slot.doseAmount);
@@ -107,4 +109,21 @@ export function scheduleFromReview(
     escalation_after_minutes: 60,
     assigned_caregiver_user_id: caregiverId || null,
   };
+}
+
+export function duplicateReviewSchedule(rows: ReviewMedication[], startDate: string, caregiverId: string): string | null {
+  const seen = new Set<string>();
+  for (const row of rows.filter(item => item.included)) {
+    for (const slot of row.administrations) {
+      const schedule = scheduleFromReview(row, slot, startDate, caregiverId);
+      const signature = JSON.stringify({ ...schedule,
+        medication_name: schedule.medication_name.toLocaleLowerCase("vi-VN").replace(/\s+/g, " "),
+        dose_unit: schedule.dose_unit.toLocaleLowerCase("vi-VN"),
+        days_of_week: [...schedule.days_of_week].sort(),
+      });
+      if (seen.has(signature)) return `${row.medicationName} lúc ${slot.time}: bản nháp đang lặp lại cùng liều, ngày và cách dùng. Bỏ chọn hoặc sửa bản bị lặp trước khi lưu.`;
+      seen.add(signature);
+    }
+  }
+  return null;
 }

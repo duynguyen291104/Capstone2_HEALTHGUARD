@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { Brand } from "@/components/brand";
 import { useAuth } from "@/components/auth-provider";
 import { Button, ErrorNotice, Field } from "@/components/ui";
-import { authApi, careApi, getErrorMessage } from "@/lib/api";
+import { ApiError, authApi, careApi, getErrorMessage } from "@/lib/api";
 
 export function CreateGroupPage() {
   const router = useRouter();
@@ -22,19 +22,26 @@ export function CreateGroupPage() {
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
-    if (name.trim().length < 2) {
-      setError("Tên nhóm cần ít nhất 2 ký tự.");
+    if (saving) return;
+    if (!name.trim() || name.trim().length > 150) {
+      setError("Tên nhóm cần từ 1 đến 150 ký tự.");
       return;
     }
     setSaving(true);
     setError("");
     try {
-      await careApi.createGroup(name.trim());
-      const updatedUser = await authApi.me();
+      const group = await careApi.createGroup(name.trim());
       createdHere.current = true;
-      setUser(updatedUser);
+      const membership = { care_group_id: group.id, care_group_name: group.name, role: group.role };
+      setUser(user ? { ...user, groups: [membership], current_group: membership } : await authApi.me());
       router.replace("/nguoi-duoc-cham-soc?welcome=1");
     } catch (caught) {
+      if (caught instanceof ApiError && ["NETWORK_ERROR", "GROUP_ALREADY_EXISTS"].includes(caught.code)) {
+        try {
+          const updated = await authApi.me();
+          if (updated.current_group) { createdHere.current = true; setUser(updated); router.replace("/hom-nay"); return; }
+        } catch { /* Keep the original useful error if the server is still offline. */ }
+      }
       setError(getErrorMessage(caught));
     } finally {
       setSaving(false);
@@ -60,6 +67,8 @@ export function CreateGroupPage() {
             placeholder="Ví dụ: Gia đình anh An"
             autoFocus
             required
+            maxLength={150}
+            disabled={saving}
           />
           <Button type="submit" loading={saving} className="button--full">
             Tạo nhóm và tiếp tục

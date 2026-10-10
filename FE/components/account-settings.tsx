@@ -6,6 +6,7 @@ import { BellRing, LockKeyhole, Save, ShieldCheck, UserRound } from "lucide-reac
 import { useAuth } from "@/components/auth-provider";
 import { Button, ErrorNotice, Field, PageHeader, SuccessNotice } from "@/components/ui";
 import { authApi, getErrorMessage } from "@/lib/api";
+import { validatePasswordChange } from "@/lib/workflow";
 
 export function AccountSettings() {
   const { user, setUser } = useAuth();
@@ -25,8 +26,10 @@ export function AccountSettings() {
 
   async function saveProfile(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (saving) return;
     setProfileError(""); setProfileSuccess("");
     if (!name.trim()) { setProfileError("Vui lòng nhập họ và tên."); return; }
+    if (name.trim().length > 150 || phone.trim().length > 30) { setProfileError("Họ tên tối đa 150 ký tự; số điện thoại tối đa 30 ký tự."); return; }
     setSaving(true);
     try {
       const updated = await authApi.updateProfile({ full_name: name.trim(), phone: phone.trim() || null });
@@ -38,9 +41,10 @@ export function AccountSettings() {
 
   async function changePassword(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (changing) return;
     setPasswordError(""); setPasswordSuccess("");
-    if (newPassword !== confirmation) { setPasswordError("Mật khẩu nhập lại chưa khớp."); return; }
-    if (newPassword === currentPassword) { setPasswordError("Mật khẩu mới phải khác mật khẩu hiện tại."); return; }
+    const validation = validatePasswordChange(currentPassword, newPassword, confirmation);
+    if (validation) { setPasswordError(validation); return; }
     setChanging(true);
     try {
       const result = await authApi.changePassword({ current_password: currentPassword, new_password: newPassword });

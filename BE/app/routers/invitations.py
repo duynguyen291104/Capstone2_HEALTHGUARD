@@ -1,13 +1,13 @@
 from datetime import UTC, datetime
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Response
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.audit import add_audit
 from app.dependencies import CurrentUser, DbSession
 from app.errors import AppError
-from app.models import CareGroupMember, Invitation, User
+from app.models import CareGroup, CareGroupMember, Invitation, User
 from app.schemas import InvitationPublic, MessageOut
 from app.security import hash_invitation_token
 
@@ -16,7 +16,8 @@ router = APIRouter(prefix="/invitations", tags=["invitations"])
 
 
 @router.get("/{token}", response_model=InvitationPublic)
-async def inspect_invitation(token: str, db: DbSession) -> InvitationPublic:
+async def inspect_invitation(token: str, db: DbSession, response: Response) -> InvitationPublic:
+    response.headers["Cache-Control"] = "no-store"
     invitation = await db.scalar(
         select(Invitation)
         .options(selectinload(Invitation.group))
@@ -46,10 +47,18 @@ async def accept_invitation(
     user: CurrentUser,
     db: DbSession,
 ) -> MessageOut:
+    group_id = await db.scalar(
+        select(Invitation.group_id).where(Invitation.token_hash == hash_invitation_token(token))
+    )
+    if group_id is None:
+        raise AppError(404, "INVITATION_INVALID", "Lời mời không hợp lệ")
+    # Serialize reissue/revoke/accept before taking the token and account locks.
+    await db.scalar(select(CareGroup.id).where(CareGroup.id == group_id).with_for_update())
     invitation = await db.scalar(
         select(Invitation)
         .where(Invitation.token_hash == hash_invitation_token(token))
         .with_for_update()
+        .execution_options(populate_existing=True)
     )
     if not invitation:
         raise AppError(404, "INVITATION_INVALID", "Lời mời không hợp lệ")

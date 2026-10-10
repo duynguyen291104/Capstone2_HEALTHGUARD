@@ -1,7 +1,8 @@
 import hashlib
 import json
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, time, timedelta
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Request, Response, status
 from sqlalchemy import delete, select, update
@@ -60,6 +61,17 @@ async def validate_assigned_caregiver(
 ) -> None:
     if caregiver_user_id is None:
         return
+    # Assignment/removal uses this same member row lock. An owner must not
+    # assign a schedule to a membership that is disappearing concurrently.
+    membership = await db.scalar(
+        select(CareGroupMember.id).where(
+            CareGroupMember.group_id == group_id,
+            CareGroupMember.user_id == caregiver_user_id,
+            CareGroupMember.role == GroupRole.CAREGIVER,
+        ).with_for_update()
+    )
+    if not membership:
+        raise AppError(400, "INVALID_ASSIGNED_CAREGIVER", "Người chăm sóc không thuộc nhóm")
     valid = await db.scalar(
         select(CaregiverAssignment.id)
         .join(
@@ -115,6 +127,8 @@ async def create_schedule(
 ) -> ScheduleOut:
     if not access.is_owner:
         raise AppError(403, "FORBIDDEN", "Chỉ chủ nhóm được tạo lịch thuốc")
+    if not access.elder.is_active:
+        raise AppError(409, "ELDER_INACTIVE", "Hồ sơ đã ngừng theo dõi")
     # A batch import can lose a response after a successful commit. Reusing
     # its per-slot key must acknowledge that schedule, not create a second one.
     idempotency_key = request.headers.get("Idempotency-Key")
@@ -189,15 +203,18 @@ async def create_schedule(
 
 
 async def get_schedule_for_group(
-    schedule_id: uuid.UUID, group_id: uuid.UUID, db: DbSession
+    schedule_id: uuid.UUID, group_id: uuid.UUID, db: DbSession, *, lock: bool = False
 ) -> MedicationSchedule:
-    schedule = await db.scalar(
+    statement = (
         select(MedicationSchedule)
         .options(selectinload(MedicationSchedule.medication))
         .join(Medication, Medication.id == MedicationSchedule.medication_id)
         .join(ElderProfile, ElderProfile.id == Medication.elder_id)
         .where(MedicationSchedule.id == schedule_id, ElderProfile.group_id == group_id)
     )
+    if lock:
+        statement = statement.with_for_update(of=MedicationSchedule).execution_options(populate_existing=True)
+    schedule = await db.scalar(statement)
     if not schedule:
         raise not_found("Lịch thuốc")
     return schedule
@@ -215,18 +232,26 @@ async def update_schedule(
         raise AppError(403, "FORBIDDEN", "Chỉ chủ nhóm được sửa lịch thuốc")
     schedule = await get_schedule_for_group(schedule_id, context.group_id, db)
     medication = schedule.medication
+    elder = await db.get(ElderProfile, medication.elder_id)
+    if not elder.is_active:
+        raise AppError(409, "ELDER_INACTIVE", "Hồ sơ đã ngừng theo dõi")
     values = payload.model_dump(exclude_unset=True)
     if not values:
         return schedule_out(schedule)
     if not schedule.is_active or not medication.is_active:
         raise AppError(409, "SCHEDULE_INACTIVE", "Lịch đã ngừng và không thể chỉnh sửa")
-    if "assigned_caregiver_user_id" in values:
-        await validate_assigned_caregiver(
-            db,
-            elder_id=medication.elder_id,
-            group_id=context.group_id,
-            caregiver_user_id=values["assigned_caregiver_user_id"],
-        )
+    await validate_assigned_caregiver(
+        db,
+        elder_id=medication.elder_id,
+        group_id=context.group_id,
+        caregiver_user_id=values.get("assigned_caregiver_user_id", schedule.assigned_caregiver_user_id),
+    )
+    # Membership precedes schedule locks, matching caregiver removal. Refresh
+    # after acquiring the schedule lock so a concurrent edit cannot fork it.
+    schedule = await get_schedule_for_group(schedule_id, context.group_id, db, lock=True)
+    medication = schedule.medication
+    if not schedule.is_active or not medication.is_active:
+        raise AppError(409, "SCHEDULE_INACTIVE", "Lịch đã ngừng và không thể chỉnh sửa")
 
     medication_values = {
         "elder_id": medication.elder_id,
@@ -278,13 +303,38 @@ async def update_schedule(
     schedule.is_active = False
     medication.is_active = False
 
+    now = datetime.now(UTC)
+    effective_from = now
+    previous_version_audit = await db.scalar(select(AuditLog).where(
+        AuditLog.action == "MEDICATION_SCHEDULE_UPDATED",
+        AuditLog.entity_id == str(schedule.id),
+    ))
+    if previous_version_audit and previous_version_audit.details.get("effective_from"):
+        effective_from = max(effective_from, datetime.fromisoformat(previous_version_audit.details["effective_from"]))
+    # One schedule version represents one daily administration. Once today's
+    # original dose has become due, editing its hour must not create a second dose
+    # for the same day; preserve that old dose and apply the change next day.
+    timezone = ZoneInfo(replacement_schedule.timezone)
+    local_day = now.astimezone(timezone).date()
+    day_start = datetime.combine(local_day, time.min, timezone).astimezone(UTC)
+    day_end = datetime.combine(local_day + timedelta(days=1), time.min, timezone).astimezone(UTC)
+    already_started = await db.scalar(select(DoseOccurrence.id).where(
+        DoseOccurrence.schedule_id == schedule.id,
+        DoseOccurrence.scheduled_for >= day_start,
+        DoseOccurrence.scheduled_for < day_end,
+        DoseOccurrence.scheduled_for <= now,
+        DoseOccurrence.status != DoseStatus.CANCELLED,
+    ).limit(1))
+    if already_started:
+        effective_from = max(effective_from, day_end)
+
     # Future occurrences are derived data. Remove them so the worker creates
     # the replacement schedule at the correct future times.
     await db.execute(
         delete(DoseOccurrence)
         .where(
             DoseOccurrence.schedule_id == schedule.id,
-            DoseOccurrence.scheduled_for > datetime.now(UTC),
+            DoseOccurrence.scheduled_for > now,
             DoseOccurrence.status.in_([DoseStatus.SCHEDULED, DoseStatus.DUE]),
         )
     )
@@ -298,6 +348,7 @@ async def update_schedule(
         details={
             "previous_schedule_id": str(schedule.id),
             "changed_fields": sorted(values),
+            "effective_from": effective_from.isoformat(),
         },
     )
     await db.commit()
@@ -313,12 +364,26 @@ async def stop_schedule(
 ) -> Response:
     if context.role != GroupRole.OWNER:
         raise AppError(403, "FORBIDDEN", "Chỉ chủ nhóm được ngừng lịch thuốc")
-    schedule = await get_schedule_for_group(schedule_id, context.group_id, db)
+    schedule = await get_schedule_for_group(schedule_id, context.group_id, db, lock=True)
     schedule.is_active = False
     schedule.medication.is_active = False
+    version_audits = (await db.scalars(select(AuditLog).where(
+        AuditLog.group_id == context.group_id,
+        AuditLog.action == "MEDICATION_SCHEDULE_UPDATED",
+    ))).all()
+    predecessors = {item.entity_id: item.details.get("previous_schedule_id") for item in version_audits}
+    lineage_ids = {schedule.id}
+    predecessor = predecessors.get(str(schedule.id))
+    while predecessor:
+        previous_id = uuid.UUID(predecessor)
+        if previous_id in lineage_ids:
+            break
+        lineage_ids.add(previous_id)
+        predecessor = predecessors.get(predecessor)
+    actionable = [DoseStatus.SCHEDULED, DoseStatus.DUE, DoseStatus.UNCONFIRMED]
     occurrence_ids = select(DoseOccurrence.id).where(
-        DoseOccurrence.schedule_id == schedule.id,
-        DoseOccurrence.status.in_([DoseStatus.SCHEDULED, DoseStatus.DUE]),
+        DoseOccurrence.schedule_id.in_(lineage_ids),
+        DoseOccurrence.status.in_(actionable),
     )
     await db.execute(
         update(NotificationAttempt)
@@ -335,8 +400,8 @@ async def stop_schedule(
     await db.execute(
         update(DoseOccurrence)
         .where(
-            DoseOccurrence.schedule_id == schedule.id,
-            DoseOccurrence.status.in_([DoseStatus.SCHEDULED, DoseStatus.DUE]),
+            DoseOccurrence.schedule_id.in_(lineage_ids),
+            DoseOccurrence.status.in_(actionable),
         )
         .values(status=DoseStatus.CANCELLED, next_action_at=None)
     )

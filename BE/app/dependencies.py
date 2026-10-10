@@ -82,7 +82,7 @@ async def get_group_context(
     statement = statement.order_by(CareGroupMember.joined_at)
     membership = (await db.scalars(statement)).first()
     if not membership:
-        raise forbidden("Bạn chưa thuộc nhóm chăm sóc này")
+        raise AppError(403, "GROUP_ACCESS_DENIED", "Bạn chưa thuộc nhóm chăm sóc này")
     return GroupContext(membership)
 
 

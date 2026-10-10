@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import date, datetime, time
+from datetime import UTC, date, datetime, time
 from decimal import Decimal
 from typing import Annotated
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -34,7 +34,19 @@ DoseUnit = Annotated[
 ]
 
 
-class ORMModel(BaseModel):
+class ResponseModel(BaseModel):
+    @field_validator("*", mode="after")
+    @classmethod
+    def ensure_timestamp_offset(cls, value: object) -> object:
+        # SQLite reloads UTC timestamps without tzinfo. Response timestamps
+        # must identify their instant; never apply this to request models or
+        # to date/local-clock fields. PostgreSQL aware values stay unchanged.
+        if isinstance(value, datetime) and value.utcoffset() is None:
+            return value.replace(tzinfo=UTC)
+        return value
+
+
+class ORMModel(ResponseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -73,7 +85,7 @@ class TelegramLinkRequest(BaseModel):
     link_code: str = Field(min_length=16, max_length=200)
 
 
-class TelegramLinkOut(BaseModel):
+class TelegramLinkOut(ResponseModel):
     deep_link: str
     expires_at: datetime
 
@@ -106,7 +118,7 @@ class MessageOut(BaseModel):
     message: str
 
 
-class MemberOut(BaseModel):
+class MemberOut(ResponseModel):
     user_id: uuid.UUID
     full_name: str
     email: EmailStr
@@ -120,7 +132,7 @@ class InvitationCreate(BaseModel):
     expires_in_hours: int = Field(default=72, ge=1, le=720)
 
 
-class InvitationCreated(BaseModel):
+class InvitationCreated(ResponseModel):
     id: uuid.UUID
     email: EmailStr
     expires_at: datetime
@@ -128,7 +140,7 @@ class InvitationCreated(BaseModel):
     invitation_url: str
 
 
-class InvitationPublic(BaseModel):
+class InvitationPublic(ResponseModel):
     email: EmailStr
     care_group_name: str
     expires_at: datetime
@@ -158,6 +170,13 @@ class ElderCreate(BaseModel):
     emergency_contact_name: str | None = Field(default=None, max_length=150)
     emergency_contact_phone: str | None = Field(default=None, max_length=30)
 
+    @field_validator("date_of_birth")
+    @classmethod
+    def validate_birth_date(cls, value: date | None) -> date | None:
+        if value is not None and value > date.today():
+            raise ValueError("date_of_birth must not be in the future")
+        return value
+
     @field_validator("diagnosed_conditions")
     @classmethod
     def clean_conditions(cls, value: list[str]) -> list[str]:
@@ -180,6 +199,11 @@ class ElderUpdate(BaseModel):
     emergency_contact_name: str | None = Field(default=None, max_length=150)
     emergency_contact_phone: str | None = Field(default=None, max_length=30)
     is_active: bool | None = None
+
+    @field_validator("date_of_birth")
+    @classmethod
+    def validate_birth_date(cls, value: date | None) -> date | None:
+        return ElderCreate.validate_birth_date(value)
 
     @model_validator(mode="before")
     @classmethod
@@ -249,10 +273,17 @@ class ScheduleCreate(BaseModel):
     end_date: date | None = None
     time_of_day: time
     days_of_week: list[int] = Field(default_factory=lambda: list(range(7)), min_length=1, max_length=7)
-    timezone: str = "Asia/Ho_Chi_Minh"
+    timezone: str = Field(default="Asia/Ho_Chi_Minh", min_length=1, max_length=64)
     reminder_offsets_minutes: list[int] = Field(default_factory=lambda: [0, 15, 30, 45])
     escalation_after_minutes: int = Field(default=60, ge=1, le=1440)
     assigned_caregiver_user_id: uuid.UUID | None = None
+
+    @field_validator("time_of_day")
+    @classmethod
+    def validate_local_clock(cls, value: time) -> time:
+        if value.tzinfo is not None:
+            raise ValueError("time_of_day must be a local clock without UTC offset; use timezone separately")
+        return value
 
     @field_validator("days_of_week")
     @classmethod
@@ -299,10 +330,15 @@ class ScheduleUpdate(BaseModel):
     end_date: date | None = None
     time_of_day: time | None = None
     days_of_week: list[int] | None = Field(default=None, min_length=1, max_length=7)
-    timezone: str | None = None
+    timezone: str | None = Field(default=None, min_length=1, max_length=64)
     reminder_offsets_minutes: list[int] | None = None
     escalation_after_minutes: int | None = Field(default=None, ge=1, le=1440)
     assigned_caregiver_user_id: uuid.UUID | None = None
+
+    @field_validator("time_of_day")
+    @classmethod
+    def validate_local_clock(cls, value: time | None) -> time | None:
+        return ScheduleCreate.validate_local_clock(value) if value is not None else None
 
     @model_validator(mode="before")
     @classmethod
@@ -339,7 +375,7 @@ class ScheduleUpdate(BaseModel):
         return ScheduleCreate.validate_timezone(value) if value is not None else None
 
 
-class ScheduleOut(BaseModel):
+class ScheduleOut(ResponseModel):
     id: uuid.UUID
     elder_id: uuid.UUID
     medication_id: uuid.UUID
@@ -359,10 +395,19 @@ class ScheduleOut(BaseModel):
 
 
 class DoseResponseCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     status: DoseResponseType
     reason_code: str | None = Field(default=None, max_length=100)
     note: str | None = Field(default=None, max_length=2000)
     administered_at: datetime | None = None
+
+    @field_validator("reason_code", "note")
+    @classmethod
+    def clean_response_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip() or None
 
     @model_validator(mode="after")
     def validate_response(self) -> DoseResponseCreate:
@@ -372,12 +417,15 @@ class DoseResponseCreate(BaseModel):
             raise ValueError("reason_code is only allowed when medicine cannot be administered")
         if self.administered_at and self.administered_at.tzinfo is None:
             raise ValueError("administered_at must include a timezone")
+        if self.status == DoseResponseType.CANNOT_ADMINISTER and self.administered_at:
+            raise ValueError("administered_at is only allowed for administered medicine")
         return self
 
 
 class DoseResponseOut(ORMModel):
     id: uuid.UUID
     responded_by_user_id: uuid.UUID
+    responded_by_name: str | None = None
     response_type: DoseResponseType
     administered_at: datetime | None
     reason: str | None
@@ -385,7 +433,7 @@ class DoseResponseOut(ORMModel):
     responded_at: datetime
 
 
-class DoseOccurrenceOut(BaseModel):
+class DoseOccurrenceOut(ResponseModel):
     id: uuid.UUID
     elder_id: uuid.UUID
     elder_name: str

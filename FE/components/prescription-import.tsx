@@ -4,16 +4,18 @@ import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, Check, FileScan, Plus, Trash2 } from "lucide-react";
 import { Button, ErrorNotice, Field, SelectField, SuccessNotice, TextareaField } from "@/components/ui";
 import { getErrorMessage, medicationApi } from "@/lib/api";
-import { createReviewMedication, endDateForDuration, reviewFieldHint, scheduleFromReview, validateReviewMedication, weekDays, type ReviewMedication } from "@/lib/prescription-review";
+import { createReviewMedication, duplicateReviewSchedule, endDateForDuration, reviewFieldHint, scheduleFromReview, validateReviewMedication, weekDays, type ReviewMedication } from "@/lib/prescription-review";
 import type { CareGroupMember, MedicationSchedule, PrescriptionOcrResult } from "@/lib/types";
+import { createRequestKey } from "@/lib/workflow";
 
 function today() {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh" }).format(new Date());
 }
 
-export function PrescriptionImport({ elderId, elderName, caregivers, onSaved }: {
+export function PrescriptionImport({ elderId, elderName, caregivers, onSaved, onBusyChange }: {
   elderId: string; elderName: string; caregivers: CareGroupMember[];
   onSaved: (schedule: MedicationSchedule) => void;
+  onBusyChange?: (busy: boolean) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [file, setFile] = useState<File | null>(null);
@@ -95,6 +97,7 @@ export function PrescriptionImport({ elderId, elderName, caregivers, onSaved }: 
   async function saveAll(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (saveInProgress.current || !reviewed) return;
+    if (caregiverId && !caregivers.some(item => item.user_id === caregiverId)) { setError("Người phụ trách không còn quyền xác nhận; hãy chọn lại."); return; }
     const selected = rows.filter(row => row.included);
     if (!selected.length) { setError("Chọn ít nhất một thuốc để tạo lịch."); return; }
     for (const row of selected) {
@@ -105,7 +108,10 @@ export function PrescriptionImport({ elderId, elderName, caregivers, onSaved }: 
         return;
       }
     }
+    const duplicate = duplicateReviewSchedule(selected, startDate, caregiverId);
+    if (duplicate) { setError(duplicate); return; }
     saveInProgress.current = true;
+    onBusyChange?.(true);
     setSaving(true); setError(""); setSuccess("");
     let created = 0;
     try {
@@ -124,6 +130,7 @@ export function PrescriptionImport({ elderId, elderName, caregivers, onSaved }: 
       setError(`${getErrorMessage(caught)} ${created ? `Đã lưu ${created} lịch trong lần này. ` : ""}Các lịch đã lưu được giữ lại; bấm lưu lại chỉ gửi các lịch còn thiếu.`);
     } finally {
       saveInProgress.current = false;
+      onBusyChange?.(false);
       setSaving(false);
     }
   }
@@ -177,7 +184,7 @@ export function PrescriptionImport({ elderId, elderName, caregivers, onSaved }: 
                     }
                     return <div key={slot.id} className="ocr-dose-row"><div className="ocr-dose-heading"><strong>{slot.label}</strong>{slotSaved ? <span className="ocr-saved"><Check size={14} /> Đã lưu</span> : row.administrations.length > 1 && <button type="button" className="icon-button" aria-label={`Xóa ${slot.label}`} disabled={hasSaved} onClick={() => updateRow(row.id, { administrations: row.administrations.filter(item => item.id !== slot.id) })}><Trash2 size={16} /></button>}</div><div className="ocr-dose-fields"><Field name={`amount-${slot.id}`} label="Liều mỗi lần *" type="number" min="0.01" step="0.01" required value={slot.doseAmount} disabled={slotSaved} className={amountHint ? "ocr-field--review" : ""} hint={amountHint} onChange={event => updateSlot({ doseAmount: event.target.value }, "dose_amount")} /><Field name={`unit-${slot.id}`} label="Đơn vị *" required maxLength={50} placeholder="viên, ml, ống…" value={slot.doseUnit} disabled={slotSaved} className={unitHint ? "ocr-field--review" : ""} hint={unitHint} onChange={event => updateSlot({ doseUnit: event.target.value }, "dose_unit")} /><Field name={`time-${slot.id}`} label="Giờ dùng *" type="time" required value={slot.time} disabled={slotSaved} className={timeHint ? "ocr-field--review" : ""} hint={timeHint ?? (!slot.time ? `Chọn giờ cụ thể cho ${slot.label.toLowerCase()}.` : undefined)} onChange={event => updateSlot({ time: event.target.value }, "time_of_day")} /></div></div>;
                   })}</div>
-                  {!hasSaved && <Button type="button" variant="ghost" onClick={() => updateRow(row.id, { administrations: [...row.administrations, { id: `${row.id}-${Date.now()}`, requestKey: crypto.randomUUID(), label: `Lần dùng ${row.administrations.length + 1}`, doseAmount: row.administrations[0]?.doseAmount ?? "", doseUnit: row.administrations[0]?.doseUnit ?? "", time: "" }] })}><Plus size={15} /> Thêm giờ dùng cho thuốc này</Button>}
+                  {!hasSaved && <Button type="button" variant="ghost" onClick={() => { const key = createRequestKey(); updateRow(row.id, { administrations: [...row.administrations, { id: `${row.id}-${key}`, requestKey: key, label: `Lần dùng ${row.administrations.length + 1}`, doseAmount: row.administrations[0]?.doseAmount ?? "", doseUnit: row.administrations[0]?.doseUnit ?? "", time: "" }] }); }}><Plus size={15} /> Thêm giờ dùng cho thuốc này</Button>}
                   <fieldset className={`ocr-weekdays ${daysHint ? "ocr-field--review" : ""}`} disabled={hasSaved}><legend>Ngày dùng trong tuần *</legend><div className="weekday-picker">{weekDays.map((day, dayIndex) => <label key={dayIndex}><input type="checkbox" checked={row.days.includes(dayIndex)} onChange={() => updateRow(row.id, { days: row.days.includes(dayIndex) ? row.days.filter(value => value !== dayIndex) : [...row.days, dayIndex].sort() }, "days_of_week")} /><span>{day}</span></label>)}</div><button type="button" className="ocr-daily-button" onClick={() => updateRow(row.id, { days: [0, 1, 2, 3, 4, 5, 6] }, "days_of_week")}>Chọn hằng ngày</button>{daysHint && <span className="field__hint">{daysHint}</span>}</fieldset>
                   <div className="field-pair"><Field name={`duration-${row.id}`} label="Số ngày dùng theo đơn" type="number" min="1" max="3650" step="1" value={row.durationDays} disabled={hasSaved} className={durationHint ? "ocr-field--review" : ""} hint={durationHint} onChange={event => updateRow(row.id, { durationDays: event.target.value, endDate: "" }, "duration_days")} /><Field name={`end-${row.id}`} label="Ngày kết thúc" type="date" min={startDate} value={row.endDate || endDateForDuration(startDate, row.durationDays)} disabled={hasSaved} hint="Để trống chỉ khi đơn cho phép dùng đến chỉ định mới." onChange={event => updateRow(row.id, { endDate: event.target.value, durationDays: "" }, "duration_days")} /></div>
                   {row.source?.source_text && <details><summary>Chữ nguồn của thuốc này</summary><pre className="ocr-text">{row.source.source_text}</pre></details>}

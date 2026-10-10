@@ -15,7 +15,9 @@ export function NotificationsPage() {
   const [checking, setChecking] = useState(false);
 
   async function createLink() {
+    if (creating || checking) return;
     setCreating(true);
+    setLink(null);
     setError("");
     try {
       setLink(await authApi.createTelegramLink());
@@ -27,6 +29,7 @@ export function NotificationsPage() {
   }
 
   async function checkConnection() {
+    if (checking || creating) return;
     setChecking(true);
     setError("");
     try {
@@ -66,20 +69,20 @@ export function NotificationsPage() {
 
           <div className="notification-connect-card__actions">
             {!user?.telegram_linked ? (
-              <Button type="button" onClick={createLink} loading={creating}>
+              <Button type="button" onClick={createLink} loading={creating} disabled={checking}>
                 <BellRing size={18} aria-hidden="true" /> Tạo liên kết Telegram
               </Button>
             ) : null}
-            <Button type="button" variant="secondary" onClick={checkConnection} loading={checking}>
+            <Button type="button" variant="secondary" onClick={checkConnection} loading={checking} disabled={creating}>
               <RefreshCw size={17} aria-hidden="true" /> Kiểm tra lại trạng thái
             </Button>
           </div>
 
-          {link ? (
+          {link && !user?.telegram_linked ? (
             <div className="telegram-link-result" role="status">
               <div>
                 <strong>Liên kết đã sẵn sàng</strong>
-                <span>Hết hạn lúc {new Intl.DateTimeFormat("vi-VN", { dateStyle: "short", timeStyle: "short" }).format(new Date(link.expires_at))}</span>
+                <span>Hết hạn lúc {new Intl.DateTimeFormat("vi-VN", { dateStyle: "short", timeStyle: "short", timeZone: "Asia/Ho_Chi_Minh" }).format(new Date(link.expires_at))}</span>
               </div>
               <a className="button button--primary" href={link.deep_link} target="_blank" rel="noreferrer">
                 Mở Telegram <ExternalLink size={17} aria-hidden="true" />

@@ -16,16 +16,21 @@ class TelegramResult:
 
 def is_public_action_url(value: str) -> bool:
     """Telegram rejects inline keyboard URLs that point to a local machine."""
-    parsed = urlparse(value)
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+    try:
+        parsed = urlparse(value)
+        hostname = parsed.hostname
+        _ = parsed.port
+    except ValueError:
         return False
-    hostname = parsed.hostname.lower()
-    if hostname == "localhost" or hostname.endswith(".localhost"):
+    if parsed.scheme not in {"http", "https"} or not hostname or parsed.username or parsed.password:
+        return False
+    hostname = hostname.lower().rstrip(".")
+    if hostname == "localhost" or hostname.endswith((".localhost", ".local")):
         return False
     try:
         address = ip_address(hostname)
     except ValueError:
-        return True
+        return "." in hostname
     return not (
         address.is_private
         or address.is_loopback
@@ -63,12 +68,17 @@ class TelegramClient:
             async with httpx.AsyncClient(timeout=10) as client:
                 response = await client.post(endpoint, json=payload)
             data = response.json()
+            if not isinstance(data, dict):
+                return TelegramResult(False, error="Telegram returned an invalid response")
             if response.is_success and data.get("ok"):
                 return TelegramResult(True, message_id=str(data["result"]["message_id"]))
-            description = str(data.get("description", "Telegram rejected the message"))[:500]
+            description = str(data.get("description", "Telegram rejected the message"))
+            description = description.replace(self.settings.telegram_bot_token, "[redacted]")[:500]
             return TelegramResult(False, error=description)
-        except (httpx.HTTPError, ValueError, KeyError) as exc:
-            return TelegramResult(False, error=str(exc)[:500])
+        except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
+            # httpx exception strings can include the entire bot-token URL.
+            # Never store those strings in notification history or logs.
+            return TelegramResult(False, error=f"Telegram request failed ({type(exc).__name__})")
 
 
 telegram_client = TelegramClient()

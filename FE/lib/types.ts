@@ -169,6 +169,7 @@ export type DoseOccurrence = {
   response?: {
     response_type: "ADMINISTERED" | "CANNOT_ADMINISTER";
     responded_by_user_id: string;
+    responded_by_name?: string | null;
     administered_at: string | null;
     responded_at: string;
     reason: string | null;

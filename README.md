@@ -12,6 +12,8 @@ Repository chung của nhóm HEALTHGUARD. Nhánh này triển khai module quản
 - Xác nhận `Đã cho uống` hoặc `Chưa thể cho uống`.
 - Worker nhắc tối đa theo cấu hình và chuyển sang `UNCONFIRMED` khi hết thời gian.
 - Telegram là kênh thông báo tùy chọn; thao tác xác nhận được thực hiện trong web sau khi đăng nhập.
+- Nhập đơn thuốc từ ảnh bằng OpenCV + Tesseract nội bộ, sửa bản nháp và xác nhận trước khi lưu.
+- Cài đặt tài khoản: sửa thông tin cá nhân và đổi mật khẩu, thu hồi các phiên cũ.
 
 `UNCONFIRMED` chỉ có nghĩa là chưa có xác nhận. Hệ thống không tự kết luận người cao tuổi đã bỏ thuốc, không chẩn đoán và không hướng dẫn thay đổi liều.
 
@@ -37,9 +39,30 @@ FE (Next.js) ──HTTP + HttpOnly cookie──> BE (FastAPI)
 - PostgreSQL đang chạy ở cổng `5432`.
 - Database `eldercare_dev` và login role `eldercare_app`.
 - Python 3.12 trở lên.
-- Node.js 20 trở lên và npm.
+- Node.js 20.9 trở lên và npm.
+- Tesseract với ngôn ngữ Việt/Anh để đọc đơn thuốc; dùng `setup-ocr.cmd` theo [hướng dẫn OCR](docs/OCR_REVIEW_GUIDE.md). OpenCV được cài cùng dependencies Python.
 
 Docker không bắt buộc cho môi trường phát triển hiện tại.
+
+## Chạy nhanh trên máy đã cấu hình
+
+Tại thư mục gốc, chỉ cần một cửa sổ PowerShell:
+
+```powershell
+.\run-healthguard.cmd
+```
+
+Mở `http://localhost:3000`. Lệnh này chạy API, worker và frontend; tự thử Telegram nếu đã có cấu hình. Lỗi tunnel/Telegram không làm tắt các chức năng web. Giữ cửa sổ mở, nhấn Ctrl+C để dừng các tiến trình do launcher tạo. Nếu cổng đã có ứng dụng chạy, launcher báo lỗi; không tự tắt tiến trình khác.
+
+Khi demo không cần Telegram hoặc không có mạng:
+
+```powershell
+.\run-healthguard.cmd --local-only
+```
+
+Chế độ này không sửa `.env`; chỉ tắt Telegram trong lượt chạy đó. PostgreSQL vẫn phải hoạt động. Các hướng dẫn tách terminal bên dưới dành cho cài đặt mới hoặc phát triển từng thành phần.
+
+Xem [checklist kiểm thử và bảo vệ](docs/DEFENSE_CHECKLIST.md), [hướng dẫn OCR](docs/OCR_REVIEW_GUIDE.md).
 
 ## 1. Chuẩn bị backend
 
@@ -126,6 +149,7 @@ Frontend:
 
 ```powershell
 cd FE
+npm test
 npm run lint
 npm run typecheck
 npm run build

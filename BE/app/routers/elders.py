@@ -45,7 +45,7 @@ def elder_out(
         height_cm=elder.height_cm,
         weight_kg=elder.weight_kg,
         diagnosed_conditions=elder.diagnoses if can_view_diagnoses else None,
-        current_medications_note=elder.current_medications_note if can_view_diagnoses else None,
+        current_medications_note=elder.current_medications_note if can_view_medications else None,
         mobility_level=elder.mobility_level,
         sleep_habits=elder.sleep_habits,
         emergency_contact_name=elder.emergency_contact_name,
@@ -178,6 +178,9 @@ async def update_elder(
         schedule_ids = select(MedicationSchedule.id).where(
             MedicationSchedule.medication_id.in_(medication_ids)
         )
+        all_occurrence_ids = select(DoseOccurrence.id).where(
+            DoseOccurrence.schedule_id.in_(schedule_ids)
+        )
         occurrence_ids = select(DoseOccurrence.id).where(
             DoseOccurrence.schedule_id.in_(schedule_ids),
             DoseOccurrence.status.in_([DoseStatus.SCHEDULED, DoseStatus.DUE]),
@@ -185,7 +188,7 @@ async def update_elder(
         await db.execute(
             update(NotificationAttempt)
             .where(
-                NotificationAttempt.occurrence_id.in_(occurrence_ids),
+                NotificationAttempt.occurrence_id.in_(all_occurrence_ids),
                 NotificationAttempt.delivered.is_(False),
             )
             .values(
@@ -234,6 +237,7 @@ async def assign_caregiver(
             CareGroupMember.user_id == caregiver_user_id,
             CareGroupMember.role == GroupRole.CAREGIVER,
         )
+        .with_for_update()
     )
     if not membership:
         raise not_found("Người chăm sóc")
@@ -304,6 +308,17 @@ async def unassign_caregiver(
 ) -> Response:
     if not access.is_owner:
         raise AppError(403, "FORBIDDEN", "Chỉ chủ nhóm được hủy phân công")
+    # Use the same target-membership lock as assignment/removal. A stale form
+    # cannot recreate or update an assignment after member access was removed.
+    membership = await db.scalar(
+        select(CareGroupMember).where(
+            CareGroupMember.group_id == access.context.group_id,
+            CareGroupMember.user_id == caregiver_user_id,
+            CareGroupMember.role == GroupRole.CAREGIVER,
+        ).with_for_update()
+    )
+    if not membership:
+        raise not_found("Phân công")
     assignment = await db.scalar(
         select(CaregiverAssignment).where(
             CaregiverAssignment.elder_id == access.elder.id,

@@ -115,22 +115,20 @@ export function TextareaField({
 }
 
 export function PageHeader({
-  eyebrow,
   title,
   description,
   action,
 }: {
   eyebrow?: string;
   title: string;
-  description: string;
+  description?: string;
   action?: ReactNode;
 }) {
   return (
     <header className="page-header">
       <div>
-        {eyebrow ? <p className="eyebrow">{eyebrow}</p> : null}
         <h1>{title}</h1>
-        <p>{description}</p>
+        {description && <p>{description}</p>}
       </div>
       {action ? <div className="page-header__action">{action}</div> : null}
     </header>
@@ -173,11 +171,13 @@ export function Modal({
   title,
   description,
   onClose,
+  dismissible = true,
   children,
 }: {
   title: string;
   description?: string;
   onClose: () => void;
+  dismissible?: boolean;
   children: ReactNode;
 }) {
   const modalRef = useRef<HTMLElement>(null);
@@ -186,8 +186,8 @@ export function Modal({
   const descriptionId = useId();
 
   useEffect(() => {
-    onCloseRef.current = onClose;
-  }, [onClose]);
+    onCloseRef.current = dismissible ? onClose : () => {};
+  }, [dismissible, onClose]);
 
   useEffect(() => {
     const modal = modalRef.current;
@@ -251,7 +251,7 @@ export function Modal({
   }, []);
 
   return (
-    <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
+    <div className="modal-backdrop" role="presentation" onMouseDown={dismissible ? onClose : undefined}>
       <section
         ref={modalRef}
         className="modal"
@@ -267,7 +267,7 @@ export function Modal({
             <h2 id={titleId}>{title}</h2>
             {description ? <p id={descriptionId}>{description}</p> : null}
           </div>
-          <button className="icon-button" type="button" onClick={onClose} aria-label="Đóng">
+          <button className="icon-button" type="button" disabled={!dismissible} onClick={onClose} aria-label="Đóng">
             <X size={20} aria-hidden="true" />
           </button>
         </header>

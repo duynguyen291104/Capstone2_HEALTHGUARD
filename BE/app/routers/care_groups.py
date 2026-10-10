@@ -95,6 +95,9 @@ async def create_invitation(
     user: CurrentUser,
     db: DbSession,
 ) -> InvitationCreated:
+    # Serialize reissues in this group before searching for outstanding tokens;
+    # otherwise two concurrent creates can both leave a usable invitation.
+    await db.scalar(select(CareGroup.id).where(CareGroup.id == context.group_id).with_for_update())
     email = str(payload.email).strip().lower()
     existing_member = await db.scalar(
         select(CareGroupMember.id)
@@ -171,11 +174,13 @@ async def revoke_invitation(
     user: CurrentUser,
     db: DbSession,
 ) -> Response:
+    await db.scalar(select(CareGroup.id).where(CareGroup.id == context.group_id).with_for_update())
     invitation = await db.scalar(
         select(Invitation).where(
             Invitation.id == invitation_id,
             Invitation.group_id == context.group_id,
         )
+        .with_for_update()
     )
     if not invitation:
         raise not_found("Lời mời")
@@ -207,6 +212,7 @@ async def remove_member(
             CareGroupMember.group_id == context.group_id,
             CareGroupMember.user_id == member_user_id,
         )
+        .with_for_update()
     )
     if not membership:
         raise not_found("Thành viên")

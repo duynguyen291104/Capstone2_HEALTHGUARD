@@ -4,7 +4,7 @@ import { AuthProvider } from "@/components/auth-provider";
 
 export const metadata: Metadata = {
   title: {
-    default: "HealthGuard — Chăm sóc đúng lúc",
+    default: "HealthGuard",
     template: "%s | HealthGuard",
   },
   description: "Quản lý hồ sơ và lịch dùng thuốc cho người cao tuổi.",

@@ -12,6 +12,7 @@ from sqlalchemy.orm import selectinload
 
 from app.config import get_settings
 from app.models import (
+    AuditLog,
     CareGroupMember,
     CaregiverAssignment,
     DoseOccurrence,
@@ -49,8 +50,19 @@ async def ensure_occurrences(db: AsyncSession, now: datetime | None = None) -> i
                 Medication.is_active.is_(True),
                 ElderProfile.is_active.is_(True),
             )
+            .with_for_update(of=MedicationSchedule, skip_locked=True)
         )
     ).all()
+    # Updated versions become effective only after their edit boundary. The
+    # original start_date remains useful history and is not a generation fence.
+    version_audits = (await db.scalars(select(AuditLog).where(
+        AuditLog.action == "MEDICATION_SCHEDULE_UPDATED",
+        AuditLog.entity_id.in_([str(schedule.id) for schedule in schedules]),
+    ))).all() if schedules else []
+    effective_times = {
+        audit.entity_id: as_utc(datetime.fromisoformat(audit.details["effective_from"]))
+        for audit in version_audits if audit.details.get("effective_from")
+    }
     values: list[dict] = []
     for schedule in schedules:
         timezone = ZoneInfo(schedule.timezone)
@@ -66,10 +78,11 @@ async def ensure_occurrences(db: AsyncSession, now: datetime | None = None) -> i
             ):
                 local_time = datetime.combine(cursor, schedule.time_of_day, timezone)
                 scheduled_for = local_time.astimezone(UTC)
-                escalation_at = scheduled_for + timedelta(
-                    minutes=schedule.escalation_after_minutes
-                )
-                if scheduled_for <= horizon and escalation_at >= now:
+                effective_from = effective_times.get(str(schedule.id))
+                if (
+                    now - timedelta(hours=24) <= scheduled_for <= horizon
+                    and (effective_from is None or scheduled_for >= effective_from)
+                ):
                     values.append(
                         {
                             "id": uuid.uuid4(),
@@ -224,13 +237,11 @@ async def process_due_occurrences(
                 DoseOccurrence.status.in_([DoseStatus.SCHEDULED, DoseStatus.DUE]),
                 DoseOccurrence.next_action_at.is_not(None),
                 DoseOccurrence.next_action_at <= now,
-                MedicationSchedule.is_active.is_(True),
-                Medication.is_active.is_(True),
                 ElderProfile.is_active.is_(True),
             )
             .order_by(DoseOccurrence.next_action_at)
             .limit(batch_size)
-            .with_for_update(skip_locked=True)
+            .with_for_update(of=DoseOccurrence, skip_locked=True)
         )
     ).all()
     for occurrence in occurrences:
@@ -291,7 +302,9 @@ def notification_text(attempt: NotificationAttempt) -> tuple[str, str]:
     medication = schedule.medication
     elder = medication.elder
     local_time = as_utc(occurrence.scheduled_for).astimezone(ZoneInfo(schedule.timezone))
-    amount = format(medication.dose_amount, "f").rstrip("0").rstrip(".")
+    amount = format(medication.dose_amount, "f")
+    if "." in amount:
+        amount = amount.rstrip("0").rstrip(".")
     dose = f"{amount} {medication.dose_unit}"
     if attempt.kind == NotificationKind.REMINDER:
         text = (
@@ -319,6 +332,7 @@ async def dispatch_notifications(
     attempts = (
         await db.scalars(
             select(NotificationAttempt)
+            .join(DoseOccurrence, DoseOccurrence.id == NotificationAttempt.occurrence_id)
             .options(
                 selectinload(NotificationAttempt.recipient),
                 selectinload(NotificationAttempt.occurrence)
@@ -336,7 +350,7 @@ async def dispatch_notifications(
             )
             .order_by(NotificationAttempt.sent_at)
             .limit(batch_size)
-            .with_for_update(skip_locked=True)
+            .with_for_update(of=[DoseOccurrence, NotificationAttempt], skip_locked=True)
         )
     ).all()
     settings = get_settings()
@@ -352,12 +366,15 @@ async def dispatch_notifications(
             attempt.next_attempt_at = None
             attempt.error = "Notification no longer applies to this dose"
             continue
+        if attempt.kind == NotificationKind.REMINDER and attempt.ordinal < occurrence.reminder_count:
+            attempt.delivery_attempt_count = 3
+            attempt.next_attempt_at = None
+            attempt.error = "A newer reminder superseded this attempt"
+            continue
 
         schedule = occurrence.schedule
         if (
-            not schedule.is_active
-            or not schedule.medication.is_active
-            or not schedule.medication.elder.is_active
+            not schedule.medication.elder.is_active
         ):
             attempt.delivery_attempt_count = 3
             attempt.next_attempt_at = None

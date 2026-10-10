@@ -16,9 +16,10 @@ import {
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { authApi } from "@/lib/api";
+import { authApi, getErrorMessage } from "@/lib/api";
 import { useAuth } from "@/components/auth-provider";
 import { Brand } from "@/components/brand";
+import { ErrorNotice } from "@/components/ui";
 
 const navItems = [
   { href: "/hom-nay", label: "Hôm nay", icon: ClipboardCheck },
@@ -35,6 +36,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
+  const [logoutError, setLogoutError] = useState("");
   const sidebarRef = useRef<HTMLElement>(null);
   const mobileMenuButtonRef = useRef<HTMLButtonElement>(null);
   const mobileCloseButtonRef = useRef<HTMLButtonElement>(null);
@@ -115,11 +118,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   async function logout() {
+    if (loggingOut) return;
+    setLoggingOut(true);
+    setLogoutError("");
     try {
       await authApi.logout();
-    } finally {
       setUser(null);
       router.replace("/dang-nhap");
+    } catch (caught) {
+      setLogoutError(`Chưa đăng xuất được. ${getErrorMessage(caught)}`);
+    } finally {
+      setLoggingOut(false);
     }
   }
 
@@ -166,7 +175,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           })}
         </nav>
         <div className="sidebar__support">
-          <p>Cần nhớ</p>
+          <p>Lưu ý</p>
           <span>“Chưa xác nhận” không có nghĩa là đã bỏ thuốc. Hãy kiểm tra trực tiếp khi cần.</span>
         </div>
       </aside>
@@ -195,7 +204,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <span className="avatar">{user?.full_name.trim().charAt(0).toUpperCase()}</span>
               <span className="profile-button__text">
                 <strong>{user?.full_name}</strong>
-                <small>{isOwner ? "Chủ gia đình" : "Người chăm sóc"}</small>
+                <small>{isOwner ? "Chủ nhóm" : "Người chăm sóc"}</small>
               </span>
               <ChevronDown size={16} aria-hidden="true" />
             </button>
@@ -205,14 +214,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 <Link className="profile-settings-link" href="/cai-dat" onClick={() => setProfileOpen(false)}>
                   <Settings size={17} aria-hidden="true" /> Cài đặt tài khoản
                 </Link>
-                <button type="button" onClick={logout}>
-                  <LogOut size={17} aria-hidden="true" /> Đăng xuất
+                <button type="button" disabled={loggingOut} onClick={logout}>
+                  <LogOut size={17} aria-hidden="true" /> {loggingOut ? "Đang đăng xuất…" : "Đăng xuất"}
                 </button>
               </div>
             ) : null}
           </div>
         </header>
-        <main className="content">{children}</main>
+        <main className="content" key={`${user?.id}:${currentGroup?.care_group_id}`}>
+          {logoutError && <ErrorNotice message={logoutError} />}
+          {children}
+        </main>
       </div>
 
       <nav

@@ -12,6 +12,7 @@ from app.models import (
     NotificationAttempt,
 )
 from app.services.scheduler import ensure_occurrences, process_due_occurrences
+from app.routers import medication_schedules
 
 
 async def login(client, email: str, password: str):
@@ -22,7 +23,7 @@ async def login(client, email: str, password: str):
     return result.json()
 
 
-async def test_invitation_assignment_schedule_and_idempotent_response(client, db_factory):
+async def test_invitation_assignment_schedule_and_idempotent_response(client, db_factory, monkeypatch):
     owner_password = "owner-secure-password"
     owner = await client.post(
         "/api/v1/auth/register",
@@ -162,11 +163,21 @@ async def test_invitation_assignment_schedule_and_idempotent_response(client, db
             ]
         )
         await db.commit()
-    changed = await client.patch(
-        f"/api/v1/medication-schedules/{schedule_id}",
-        headers=headers,
-        json={"time_of_day": "08:05:00"},
-    )
+    class EditClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            instant = datetime(2026, 9, 20, 0, 30, tzinfo=UTC)
+            return instant.astimezone(tz) if tz else instant.replace(tzinfo=None)
+
+    # The edit precedes the worker's simulated day. Real wall-clock time must
+    # not make a September fixture effective only in October.
+    with monkeypatch.context() as scoped:
+        scoped.setattr(medication_schedules, "datetime", EditClock)
+        changed = await client.patch(
+            f"/api/v1/medication-schedules/{schedule_id}",
+            headers=headers,
+            json={"time_of_day": "08:05:00"},
+        )
     assert changed.status_code == 200, changed.text
     assert changed.json()["id"] != schedule_id
     assert changed.json()["time_of_day"] == "08:05:00"
@@ -227,10 +238,13 @@ async def test_invitation_assignment_schedule_and_idempotent_response(client, db
     )
     assert first_response.status_code == 200, first_response.text
     assert first_response.json()["status"] == "ADMINISTERED"
+    assert first_response.json()["response"]["responded_by_name"] == "Co Lan"
+    assert first_response.json()["response"]["responded_by_user_id"] == caregiver_id
     retry = await client.post(
         f"/api/v1/dose-occurrences/{dose['id']}/responses", headers=headers, json=payload
     )
     assert retry.status_code == 200, retry.text
+    assert retry.json()["response"]["responded_by_name"] == "Co Lan"
 
     async with db_factory() as db:
         count = await db.scalar(select(func.count()).select_from(DoseResponse))
@@ -239,3 +253,16 @@ async def test_invitation_assignment_schedule_and_idempotent_response(client, db
         assert attempt is not None
         assert attempt.delivery_attempt_count == 3
         assert attempt.next_attempt_at is None
+
+    # Removing access must not erase who performed a historical confirmation.
+    await client.post("/api/v1/auth/logout")
+    await login(client, "owner@care.example.com", owner_password)
+    removed = await client.delete(
+        f"/api/v1/care-groups/current/members/{caregiver_id}", headers=headers
+    )
+    assert removed.status_code == 204, removed.text
+    history = await client.get("/api/v1/dose-occurrences?date=2026-09-20", headers=headers)
+    assert history.status_code == 200, history.text
+    historic_dose = next(item for item in history.json() if item["id"] == dose["id"])
+    assert historic_dose["response"]["responded_by_name"] == "Co Lan"
+    assert historic_dose["response"]["responded_by_user_id"] == caregiver_id

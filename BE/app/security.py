@@ -40,7 +40,14 @@ def create_access_token(user_id: uuid.UUID, session_id: uuid.UUID, expires_at: d
 
 def decode_access_token(token: str) -> tuple[uuid.UUID, uuid.UUID]:
     settings = get_settings()
-    payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+    payload = jwt.decode(
+        token,
+        settings.jwt_secret,
+        algorithms=[settings.jwt_algorithm],
+        options={"require": ["sub", "sid", "iat", "exp"]},
+    )
+    if not isinstance(payload["sub"], str) or not isinstance(payload["sid"], str):
+        raise ValueError("Invalid session claims")
     return uuid.UUID(payload["sub"]), uuid.UUID(payload["sid"])
 
 

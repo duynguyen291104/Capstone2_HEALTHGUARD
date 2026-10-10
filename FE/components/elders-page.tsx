@@ -16,6 +16,7 @@ import {
 } from "@/components/ui";
 import { eldersApi, getErrorMessage } from "@/lib/api";
 import type { Elder } from "@/lib/types";
+import { isCalendarDate } from "@/lib/workflow";
 
 const emptyForm = {
   full_name: "",
@@ -64,7 +65,7 @@ function birthYear(date: string | null) {
   return Number.isNaN(year) ? "Chưa có ngày sinh" : `Sinh năm ${year}`;
 }
 
-function ElderForm({ elder, onSaved, onClose }: { elder?: Elder | null; onSaved: (elder: Elder) => void; onClose: () => void }) {
+function ElderForm({ elder, onSaved, onClose, onBusyChange }: { elder?: Elder | null; onSaved: (elder: Elder) => void; onClose: () => void; onBusyChange: (busy: boolean) => void }) {
   const [values, setValues] = useState<ElderFormState>(() => toForm(elder));
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -75,8 +76,15 @@ function ElderForm({ elder, onSaved, onClose }: { elder?: Elder | null; onSaved:
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
+    if (saving) return;
     if (!values.full_name.trim()) return setError("Hãy nhập họ tên người được chăm sóc.");
+    if (values.full_name.trim().length > 150) return setError("Họ tên tối đa 150 ký tự.");
+    const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh" }).format(new Date());
+    if (values.date_of_birth && (!isCalendarDate(values.date_of_birth) || values.date_of_birth > today)) return setError("Ngày sinh phải hợp lệ và không ở tương lai.");
+    const conditions = [...new Set(values.diagnosed_conditions.split(/[,\n]/).map(item => item.trim()).filter(Boolean))];
+    if (conditions.length > 100 || conditions.some(item => item.length > 200)) return setError("Tối đa 100 bệnh đã chẩn đoán; mỗi mục tối đa 200 ký tự.");
     setSaving(true);
+    onBusyChange(true);
     setError("");
     const body = {
       full_name: values.full_name.trim(),
@@ -84,7 +92,7 @@ function ElderForm({ elder, onSaved, onClose }: { elder?: Elder | null; onSaved:
       sex: values.sex || "UNDISCLOSED",
       height_cm: nullableNumber(values.height_cm),
       weight_kg: nullableNumber(values.weight_kg),
-      diagnosed_conditions: values.diagnosed_conditions.split(/[,\n]/).map((item) => item.trim()).filter(Boolean),
+      diagnosed_conditions: conditions,
       current_medications_note: nullable(values.current_medications_note),
       mobility_level: nullable(values.mobility_level),
       sleep_habits: nullable(values.sleep_habits),
@@ -98,38 +106,40 @@ function ElderForm({ elder, onSaved, onClose }: { elder?: Elder | null; onSaved:
       setError(getErrorMessage(caught));
     } finally {
       setSaving(false);
+      onBusyChange(false);
     }
   }
 
   return (
     <form className="form-grid" onSubmit={submit}>
       {error ? <div className="form-grid__full"><ErrorNotice message={error} /></div> : null}
-      <Field label="Họ và tên *" value={values.full_name} onChange={(event) => update("full_name", event.target.value)} required />
-      <Field label="Ngày sinh" type="date" value={values.date_of_birth} onChange={(event) => update("date_of_birth", event.target.value)} />
-      <SelectField label="Giới tính" value={values.sex} onChange={(event) => update("sex", event.target.value)}>
+      <Field label="Họ và tên *" maxLength={150} disabled={saving} value={values.full_name} onChange={(event) => update("full_name", event.target.value)} required />
+      <Field label="Ngày sinh" type="date" disabled={saving} max={new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh" }).format(new Date())} value={values.date_of_birth} onChange={(event) => update("date_of_birth", event.target.value)} />
+      <SelectField label="Giới tính" disabled={saving} value={values.sex} onChange={(event) => update("sex", event.target.value)}>
         <option value="">Chưa khai báo</option>
+        <option value="UNDISCLOSED">Không cung cấp</option>
         <option value="MALE">Nam</option>
         <option value="FEMALE">Nữ</option>
         <option value="OTHER">Khác</option>
       </SelectField>
-      <SelectField label="Khả năng đi lại" value={values.mobility_level} onChange={(event) => update("mobility_level", event.target.value)}>
+      <SelectField label="Khả năng đi lại" disabled={saving} value={values.mobility_level} onChange={(event) => update("mobility_level", event.target.value)}>
         <option value="">Chưa khai báo</option>
         <option value="INDEPENDENT">Tự đi lại</option>
         <option value="NEEDS_ASSISTANCE">Cần người hỗ trợ</option>
         <option value="WHEELCHAIR">Dùng xe lăn</option>
         <option value="BEDRIDDEN">Nằm tại giường</option>
       </SelectField>
-      <Field label="Chiều cao (cm)" type="number" min="30" max="250" step="0.1" value={values.height_cm} onChange={(event) => update("height_cm", event.target.value)} />
-      <Field label="Cân nặng (kg)" type="number" min="1" max="400" step="0.1" value={values.weight_kg} onChange={(event) => update("weight_kg", event.target.value)} />
-      <TextareaField label="Bệnh đã được chẩn đoán" hint="Ngăn cách bằng dấu phẩy, theo thông tin từ cơ sở y tế." value={values.diagnosed_conditions} onChange={(event) => update("diagnosed_conditions", event.target.value)} />
-      <TextareaField label="Thuốc đang sử dụng (ghi chú)" value={values.current_medications_note} onChange={(event) => update("current_medications_note", event.target.value)} />
-      <TextareaField label="Thói quen ngủ" value={values.sleep_habits} onChange={(event) => update("sleep_habits", event.target.value)} />
+      <Field label="Chiều cao (cm)" type="number" disabled={saving} min="30" max="250" step="0.1" value={values.height_cm} onChange={(event) => update("height_cm", event.target.value)} />
+      <Field label="Cân nặng (kg)" type="number" disabled={saving} min="1" max="400" step="0.1" value={values.weight_kg} onChange={(event) => update("weight_kg", event.target.value)} />
+      <TextareaField label="Bệnh đã được chẩn đoán" disabled={saving} hint="Ngăn cách bằng dấu phẩy, theo thông tin từ cơ sở y tế." value={values.diagnosed_conditions} onChange={(event) => update("diagnosed_conditions", event.target.value)} />
+      <TextareaField label="Thuốc đang sử dụng (ghi chú)" maxLength={3000} disabled={saving} value={values.current_medications_note} onChange={(event) => update("current_medications_note", event.target.value)} />
+      <TextareaField label="Thói quen ngủ" maxLength={2000} disabled={saving} value={values.sleep_habits} onChange={(event) => update("sleep_habits", event.target.value)} />
       <div className="field-pair">
-        <Field label="Người liên hệ khẩn cấp" value={values.emergency_contact_name} onChange={(event) => update("emergency_contact_name", event.target.value)} />
-        <Field label="Số điện thoại" type="tel" value={values.emergency_contact_phone} onChange={(event) => update("emergency_contact_phone", event.target.value)} />
+        <Field label="Người liên hệ khẩn cấp" maxLength={150} disabled={saving} value={values.emergency_contact_name} onChange={(event) => update("emergency_contact_name", event.target.value)} />
+        <Field label="Số điện thoại" type="tel" maxLength={30} disabled={saving} value={values.emergency_contact_phone} onChange={(event) => update("emergency_contact_phone", event.target.value)} />
       </div>
       <div className="form-actions form-grid__full">
-        <Button type="button" variant="secondary" onClick={onClose}>Hủy</Button>
+        <Button type="button" variant="secondary" disabled={saving} onClick={onClose}>Hủy</Button>
         <Button type="submit" loading={saving}>{elder ? "Lưu thay đổi" : "Thêm hồ sơ"}</Button>
       </div>
     </form>
@@ -142,6 +152,8 @@ export function EldersPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [editing, setEditing] = useState<Elder | "new" | null>(null);
+  const [reload, setReload] = useState(0);
+  const [formBusy, setFormBusy] = useState(false);
   const isOwner = user?.current_group?.role === "OWNER";
 
   useEffect(() => {
@@ -151,7 +163,7 @@ export function EldersPage() {
       .catch((caught) => { if (active) setError(getErrorMessage(caught)); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, []);
+  }, [reload]);
 
   function saved(elder: Elder) {
     setElders((current) => current.some((item) => item.id === elder.id)
@@ -169,7 +181,7 @@ export function EldersPage() {
         action={isOwner ? <Button onClick={() => setEditing("new")}><Plus size={18} /> Thêm hồ sơ</Button> : undefined}
       />
       {error ? <ErrorNotice message={error} /> : null}
-      {loading ? <SkeletonList /> : elders.length === 0 ? (
+      {loading ? <SkeletonList /> : error && !elders.length ? <Button type="button" onClick={() => { setLoading(true); setError(""); setReload(value => value + 1); }}>Tải lại hồ sơ</Button> : elders.length === 0 ? (
         <EmptyState
           title={isOwner ? "Chưa có hồ sơ nào" : "Bạn chưa được phân công"}
           description={isOwner ? "Thêm bố, mẹ hoặc người thân cần chăm sóc để bắt đầu tạo lịch thuốc." : "Hãy nhờ chủ gia đình phân công một người được chăm sóc cho bạn."}
@@ -200,9 +212,9 @@ export function EldersPage() {
           ))}
         </div>
       )}
-      {editing ? (
-        <Modal title={editing === "new" ? "Thêm người được chăm sóc" : "Cập nhật hồ sơ"} description="Chỉ nhập thông tin đã được xác nhận; bạn có thể bổ sung sau." onClose={() => setEditing(null)}>
-          <ElderForm elder={editing === "new" ? null : editing} onSaved={saved} onClose={() => setEditing(null)} />
+      {editing && isOwner ? (
+        <Modal dismissible={!formBusy} title={editing === "new" ? "Thêm người được chăm sóc" : "Cập nhật hồ sơ"} description="Chỉ nhập thông tin đã được xác nhận; bạn có thể bổ sung sau." onClose={() => { if (!formBusy) setEditing(null); }}>
+          <ElderForm elder={editing === "new" ? null : editing} onSaved={saved} onBusyChange={setFormBusy} onClose={() => { if (!formBusy) setEditing(null); }} />
         </Modal>
       ) : null}
     </>
