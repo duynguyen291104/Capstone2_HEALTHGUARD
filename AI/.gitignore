@@ -1,0 +1,57 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+.tools/
+.cache/
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Local data and generated artifacts
+data/raw/*
+data/interim/*
+data/processed/*
+data/cache/
+data/models/*
+artifacts/*
+runtime/*
+build/
+dist/
+tmp/
+output/pdf/*.aux
+output/pdf/*.lof
+output/pdf/*.log
+output/pdf/*.lot
+output/pdf/*.toc
+*.onnx
+*.pt
+*.pth
+
+# Keep directory contracts in git
+!data/raw/.gitkeep
+!data/interim/.gitkeep
+!data/processed/.gitkeep
+!data/models/.gitkeep
+!artifacts/.gitkeep
+!runtime/.gitkeep
+
+# Runtime models required by a fresh clone
+!artifacts/urfd_preview_gru/
+artifacts/urfd_preview_gru/*
+!artifacts/urfd_preview_gru/best.pt
+!data/models/pose_landmarker_full.task
+!data/models/pose_landmarker_lite.task
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example

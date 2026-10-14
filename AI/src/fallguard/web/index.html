@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="FallGuard AI — giám sát và xác minh sự kiện té ngã">
+    <title>FallGuard AI · Safety Console</title>
+    <link rel="stylesheet" href="/static/style.css">
+  </head>
+  <body>
+    <div class="ambient ambient-one"></div>
+    <div class="ambient ambient-two"></div>
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="FallGuard AI">
+        <span class="brand-mark">
+          <svg viewBox="0 0 48 48" aria-hidden="true">
+            <path d="M24 3 42 10v12c0 11.4-7.3 19.1-18 23C13.3 41.1 6 33.4 6 22V10L24 3Z"/>
+            <path class="pulse" d="m12 25 7-1 3-8 5 15 3-7h7"/>
+          </svg>
+        </span>
+        <span><strong>FallGuard</strong><small>AI Safety Console</small></span>
+      </a>
+      <div class="system-pill" id="systemStatus">
+        <i></i><span>Đang kết nối</span>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div>
+          <p class="eyebrow">POSE-SEQUENCE INTELLIGENCE</p>
+          <h1>Phát hiện sớm.<br><em>Xác minh thông minh.</em></h1>
+          <p class="hero-copy">
+            Phân tích chuyển động theo thời gian, kiểm tra bất động sau ngã và
+            ghi nhận khả năng tự phục hồi—không gửi cảnh báo chỉ từ một khung hình.
+          </p>
+        </div>
+        <div class="hero-orbit" aria-hidden="true">
+          <span class="orbit orbit-a"></span>
+          <span class="orbit orbit-b"></span>
+          <div class="hero-score">
+            <small>System state</small>
+            <strong id="heroState">NORMAL</strong>
+            <span id="heroModel">Đang đọc model…</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="metrics-grid" aria-label="Tổng quan">
+        <article class="metric-card">
+          <span class="metric-icon mint">↗</span>
+          <div><small>Tổng sự kiện</small><strong id="metricTotal">—</strong></div>
+          <p>Lịch sử đã xác minh</p>
+        </article>
+        <article class="metric-card">
+          <span class="metric-icon coral">!</span>
+          <div><small>Nguy cơ cao</small><strong id="metricHigh">—</strong></div>
+          <p>Cần được chú ý</p>
+        </article>
+        <article class="metric-card">
+          <span class="metric-icon blue">✓</span>
+          <div><small>Tự phục hồi</small><strong id="metricRecovered">—</strong></div>
+          <p>Đã đứng dậy an toàn</p>
+        </article>
+        <article class="metric-card">
+          <span class="metric-icon amber">≈</span>
+          <div><small>Bất động TB</small><strong id="metricInactive">—</strong></div>
+          <p>Giây sau sự kiện</p>
+        </article>
+      </section>
+
+      <section class="workspace-grid">
+        <article class="panel upload-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">VIDEO ANALYSIS</p>
+              <h2>Kiểm tra một video</h2>
+            </div>
+            <span class="step-label">01 · INPUT</span>
+          </div>
+          <form id="uploadForm">
+            <label class="dropzone" id="dropzone">
+              <input id="videoInput" type="file" accept="video/*" required>
+              <span class="upload-glyph">↑</span>
+              <strong>Thả video vào đây</strong>
+              <small>hoặc nhấn để chọn · MP4, MOV, AVI, MKV, WEBM</small>
+              <span class="selected-file" id="selectedFile"></span>
+            </label>
+            <div class="input-row">
+              <label>
+                <span>Camera ID</span>
+                <input id="cameraId" value="CAM-DEMO-01" maxlength="128">
+              </label>
+              <label>
+                <span>Person ID <small>(không bắt buộc)</small></span>
+                <input id="personId" placeholder="USER-001" maxlength="128">
+              </label>
+            </div>
+            <label class="check-row">
+              <input id="urfdPreview" type="checkbox">
+              <span>
+                <strong>Video mẫu URFD</strong>
+                <small>Crop nửa RGB bên phải của video depth + RGB chính thức</small>
+              </span>
+            </label>
+            <button class="primary-button" id="analyzeButton" type="submit">
+              <span>Phân tích video</span><b>→</b>
+            </button>
+          </form>
+        </article>
+
+        <article class="panel result-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">LATEST RESULT</p>
+              <h2>Kết quả phân tích</h2>
+            </div>
+            <span class="step-label">02 · VERIFY</span>
+          </div>
+          <div class="empty-result" id="emptyResult">
+            <span class="scan-lines"></span>
+            <div class="skeleton-glyph">⌁</div>
+            <strong>Chưa có video được phân tích</strong>
+            <p>Kết quả tư thế, xác suất ngã và timeline sẽ xuất hiện tại đây.</p>
+          </div>
+          <div class="result-content hidden" id="resultContent">
+            <div class="result-state">
+              <div>
+                <small>TRẠNG THÁI CUỐI</small>
+                <strong id="resultState">NORMAL</strong>
+              </div>
+              <div class="risk-ring" id="riskRing"><span id="resultRisk">LOW</span></div>
+            </div>
+            <div class="result-stats">
+              <div><small>Khung hình</small><strong id="resultFrames">0</strong></div>
+              <div><small>Pose hợp lệ</small><strong id="resultPoses">0</strong></div>
+              <div><small>Tốc độ</small><strong id="resultFps">0 FPS</strong></div>
+            </div>
+            <div class="timeline-wrap">
+              <div class="timeline-head"><span>Timeline suy luận</span><small id="timelineCount">0 mốc</small></div>
+              <div class="timeline" id="timeline"></div>
+            </div>
+            <div class="result-links">
+              <a id="videoLink" class="secondary-button hidden" target="_blank">Xem video chú thích ↗</a>
+              <a id="jsonLink" class="text-link hidden" target="_blank">Tải event JSON</a>
+            </div>
+          </div>
+          <div class="processing hidden" id="processing">
+            <span class="loader"></span>
+            <strong>Đang theo dõi chuỗi chuyển động…</strong>
+            <p>Pose → causal window → fall probability → post-fall verification</p>
+          </div>
+          <div class="error-box hidden" id="errorBox"></div>
+        </article>
+      </section>
+
+      <section class="panel history-panel">
+        <div class="panel-heading history-heading">
+          <div>
+            <p class="eyebrow">AUDIT TRAIL</p>
+            <h2>Lịch sử sự kiện</h2>
+          </div>
+          <button class="icon-button" id="refreshEvents" title="Làm mới">↻</button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Thời điểm</th>
+                <th>Sự kiện / Camera</th>
+                <th>Trạng thái</th>
+                <th>Nguy cơ</th>
+                <th>Bất động</th>
+                <th>Phản hồi</th>
+              </tr>
+            </thead>
+            <tbody id="eventRows">
+              <tr><td class="loading-row" colspan="6">Đang tải lịch sử…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <dialog id="feedbackDialog">
+      <form method="dialog" id="feedbackForm">
+        <div class="dialog-head">
+          <div><p class="eyebrow">CAREGIVER REVIEW</p><h3>Phản hồi sự kiện</h3></div>
+          <button value="cancel" class="close-button" aria-label="Đóng">×</button>
+        </div>
+        <input type="hidden" id="feedbackEventId">
+        <label><span>Kết luận</span>
+          <select id="feedbackLabel">
+            <option value="true_fall">Té ngã thực</option>
+            <option value="false_alarm">Cảnh báo giả</option>
+            <option value="uncertain">Chưa chắc chắn</option>
+          </select>
+        </label>
+        <label><span>Ghi chú</span><textarea id="feedbackNotes" rows="4" placeholder="Bổ sung bối cảnh quan sát…"></textarea></label>
+        <button class="primary-button" value="default" type="submit">Lưu phản hồi</button>
+      </form>
+    </dialog>
+
+    <footer><span>FallGuard AI · Capstone MVP</span><span>Privacy-first pose analytics</span></footer>
+    <div id="toast" role="status" aria-live="polite"></div>
+    <script src="/static/app.js" defer></script>
+  </body>
+</html>

@@ -1,0 +1,10 @@
+order,file,urfd_sequence,ground_truth,expected_final_state,confirmed_events,max_fall_probability,purpose
+1,01_FALL_CONFIRMED_URFD_fall-19.mp4,fall-19,FALL,CONFIRMED_FALL,1,0.999,Demo chính: xác nhận ngã
+2,02_FALL_CONFIRMED_URFD_fall-20.mp4,fall-20,FALL,CONFIRMED_FALL,1,0.970,Demo dương tính thứ hai
+3,03_FALL_EDGE_VERIFYING_URFD_fall-06.mp4,fall-06,FALL,VERIFYING,0,0.908,True fall chưa đủ bằng chứng xác nhận
+4,04_ADL_NORMAL_URFD_adl-02.mp4,adl-02,ADL,NORMAL,0,0.303,Hoạt động bình thường
+5,05_ADL_NORMAL_URFD_adl-07.mp4,adl-07,ADL,NORMAL,0,0.799,ADL có chuyển động nhưng không xác nhận ngã
+6,06_ADL_NORMAL_URFD_adl-10.mp4,adl-10,ADL,NORMAL,0,0.434,Hoạt động bình thường
+7,07_ADL_NORMAL_URFD_adl-16.mp4,adl-16,ADL,NORMAL,0,0.124,Negative dễ
+8,08_ADL_HARD_NORMAL_URFD_adl-23.mp4,adl-23,ADL,NORMAL,0,0.988,Hard negative: xác suất có spike nhưng state machine từ chối
+9,09_ADL_EDGE_VERIFYING_URFD_adl-06.mp4,adl-06,ADL,VERIFYING,0,0.994,False candidate để minh họa giới hạn
