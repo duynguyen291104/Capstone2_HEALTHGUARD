@@ -1,0 +1,70 @@
+project:
+  name: FallGuard AI
+  seed: 42
+  device: auto
+
+paths:
+  raw_dir: data/raw
+  interim_dir: data/interim
+  processed_dir: data/processed
+  manifest_dir: data/manifests
+  artifact_dir: artifacts
+  runtime_dir: runtime
+
+data:
+  dataset: urfd
+  camera: cam0
+  target_fps: 20
+  window_size: 40
+  stride: 5
+  max_interpolation_gap: 3
+  min_pose_visibility: 0.35
+  pose_model_variant: full
+  min_pose_detection_confidence: 0.35
+  min_pose_presence_confidence: 0.35
+  min_pose_tracking_confidence: 0.35
+  splits:
+    train: 0.70
+    validation: 0.15
+    test: 0.15
+
+features:
+  include_xyz: true
+  include_visibility: true
+  include_velocity: true
+  include_geometry: true
+  normalize_center: hip
+  normalize_scale: torso
+
+model:
+  architecture: gru
+  hidden_size: 96
+  num_layers: 2
+  dropout: 0.30
+  posture_classes: 3
+  posture_loss_weight: 0.30
+
+training:
+  batch_size: 32
+  epochs: 30
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  patience: 7
+  num_workers: 0
+  weighted_loss: true
+
+event_detection:
+  ema_alpha: 0.40
+  possible_fall_probability: 0.70
+  confirm_fall_probability: 0.82
+  possible_fall_min_seconds: 0.25
+  fallen_min_seconds: 2.0
+  inactive_seconds: 8.0
+  recovery_upright_seconds: 1.5
+  cooldown_seconds: 20.0
+
+api:
+  host: 127.0.0.1
+  port: 8000
+  max_upload_mb: 250
+  cors_origins: []
