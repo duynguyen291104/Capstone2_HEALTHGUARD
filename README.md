@@ -124,16 +124,20 @@ Mở `http://localhost:3000`.
 
 ## Luồng kiểm thử thủ công
 
+> Nhánh này thêm mã phòng. Với database đã cài, dừng launcher và chạy migration một lần từ thư mục gốc: `cd BE`, rồi `./.venv/Scripts/python.exe -m alembic upgrade head`. Quay lại thư mục gốc rồi chạy launcher. Không cần tạo lại database hay sửa `.env`.
+
 1. Đăng ký tài khoản. Hệ thống tự đăng nhập nhưng chưa tạo nhóm.
 2. Đặt tên và tạo nhóm chăm sóc ở màn hình tiếp theo; tài khoản trở thành `OWNER`.
 3. Tạo hồ sơ người được chăm sóc.
-4. Tạo lời mời và sao chép đường dẫn mời.
-5. Mở đường dẫn ở cửa sổ ẩn danh. Người chăm sóc có thể tạo tài khoản mới hoặc đăng nhập tài khoản chưa thuộc nhóm để chấp nhận lời mời.
+4. Người chăm sóc đăng ký tài khoản riêng và chưa tạo nhóm. Chủ nhóm có thể tạo lời mời cho email đã đăng ký rồi chia sẻ liên kết, hoặc tạo mã phòng trong mục **Người chăm sóc**.
+5. Người chăm sóc đăng nhập để chấp nhận liên kết đúng email hoặc nhập mã phòng trên màn hình chưa có nhóm. Mã dùng trong 24 giờ, có thể kèm mật khẩu, tạo mã mới sẽ vô hiệu mã cũ. Tham gia không tự cấp quyền xem hồ sơ.
 6. Chủ nhà phân công người chăm sóc cho hồ sơ và chọn từng quyền.
 7. Chủ nhà tạo lịch thuốc.
 8. Chạy worker một chu kỳ hoặc chờ tới giờ đã đặt.
 9. Người chăm sóc mở trang `Hôm nay` và phản hồi lần uống.
 10. Chủ nhà kiểm tra trạng thái và người đã phản hồi.
+
+Kiểm tra email trong database chỉ xác nhận đã có tài khoản HealthGuard. Hiện chưa gửi email tự động và chưa xác minh quyền sở hữu hộp thư. Hồ sơ mới bắt buộc có tên và số điện thoại liên hệ khẩn cấp; hồ sơ cũ không tự thay đổi.
 
 ## Kiểm tra mã nguồn
 

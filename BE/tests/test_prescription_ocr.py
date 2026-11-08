@@ -167,7 +167,7 @@ async def test_ocr_access_limits_and_no_automatic_schedule(client, db_factory, m
     await client.post("/api/v1/auth/register", json=account)
     group = await client.post("/api/v1/care-groups", json={"name": "OCR family"})
     headers = {"X-Care-Group-ID": group.json()["id"], "Content-Type": "image/png"}
-    elder = await client.post("/api/v1/elders", headers={"X-Care-Group-ID": group.json()["id"]}, json={"full_name": "Ba"})
+    elder = await client.post("/api/v1/elders", headers={"X-Care-Group-ID": group.json()["id"]}, json={"emergency_contact_name": "Test contact", "emergency_contact_phone": "0900000000", "full_name": "Ba"})
     path = f"/api/v1/elders/{elder.json()['id']}/prescription-ocr"
     assert (await client.post(path, headers=headers, content=png())).status_code == 400
     assert (await client.post(path + "?consent=true", headers=headers, content=b"fake")).status_code == 415
@@ -209,7 +209,7 @@ async def test_real_ocr_then_explicit_schedule_creation(client, db_factory):
     account = {"full_name": "OCR integration", "email": "local-ocr@example.com", "password": "integration-password"}
     assert (await client.post("/api/v1/auth/register", json=account)).status_code == 201
     assert (await client.post("/api/v1/care-groups", json={"name": "OCR test"})).status_code == 201
-    elder = await client.post("/api/v1/elders", json={"full_name": "Người mẫu"})
+    elder = await client.post("/api/v1/elders", json={"emergency_contact_name": "Test contact", "emergency_contact_phone": "0900000000", "full_name": "Người mẫu"})
     elder_id = elder.json()["id"]
     result = await client.post(
         f"/api/v1/elders/{elder_id}/prescription-ocr?consent=true",

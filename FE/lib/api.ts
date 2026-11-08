@@ -175,6 +175,9 @@ export const eldersApi = {
 };
 
 export const careApi = {
+  issueRoomCode: (password?: string) => request<{ code: string; expires_at: string }>("/care-groups/current/room-code", { method: "POST", body: { password } }),
+  revokeRoomCode: () => request<void>("/care-groups/current/room-code", { method: "DELETE" }),
+  joinRoom: (code: string, password?: string) => request<{ id: string; name: string; role: "CAREGIVER" }>("/care-groups/join", { method: "POST", body: { code, password } }),
   createGroup: (name: string) =>
     request<{ id: string; name: string; role: "OWNER" }>("/care-groups", {
       method: "POST",

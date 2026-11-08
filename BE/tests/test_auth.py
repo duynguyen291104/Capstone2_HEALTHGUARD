@@ -81,7 +81,7 @@ async def test_owner_cannot_access_another_households_elder(client):
     elder = await client.post(
         "/api/v1/elders",
         headers={"X-Care-Group-ID": first_group},
-        json={"full_name": "Cu Ba", "diagnosed_conditions": ["Tang huyet ap"]},
+        json={"emergency_contact_name": "Test contact", "emergency_contact_phone": "0900000000", "full_name": "Cu Ba", "diagnosed_conditions": ["Tang huyet ap"]},
     )
     assert elder.status_code == 201
     elder_id = elder.json()["id"]
@@ -107,6 +107,8 @@ async def test_owner_cannot_access_another_households_elder(client):
 
 
 async def test_existing_account_without_group_can_accept_caregiver_invitation(client):
+    from conftest import register_test_account
+    await register_test_account("existing-helper@example.com")
     owner = await client.post(
         "/api/v1/auth/register",
         json={
@@ -128,14 +130,13 @@ async def test_existing_account_without_group_can_accept_caregiver_invitation(cl
     await client.post("/api/v1/auth/logout")
 
     helper = await client.post(
-        "/api/v1/auth/register",
+        "/api/v1/auth/login",
         json={
-            "full_name": "Nguoi cham soc",
             "email": "existing-helper@example.com",
             "password": "caregiver-password",
         },
     )
-    assert helper.status_code == 201
+    assert helper.status_code == 200
     assert helper.json()["groups"] == []
     accepted = await client.post(f"/api/v1/invitations/{token}/accept")
     assert accepted.status_code == 200, accepted.text

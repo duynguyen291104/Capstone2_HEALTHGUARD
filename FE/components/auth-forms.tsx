@@ -110,7 +110,7 @@ export function AccountRegisterForm() {
       <div className="auth-heading">
         <p className="eyebrow">Bắt đầu với HealthGuard</p>
         <h1>Tạo tài khoản</h1>
-        <p>Đăng ký trước, sau đó bạn sẽ tạo nhóm chăm sóc trong một bước riêng.</p>
+        <p>Đăng ký trước, sau đó tạo nhóm chăm sóc hoặc tham gia bằng mã phòng.</p>
       </div>
       {serverError ? <ErrorNotice message={serverError} /> : null}
       <form className="form-grid" onSubmit={handleSubmit(onSubmit)} noValidate>

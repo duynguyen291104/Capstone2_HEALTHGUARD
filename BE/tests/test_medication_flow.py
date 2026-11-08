@@ -44,7 +44,7 @@ async def test_invitation_assignment_schedule_and_idempotent_response(client, db
         "/api/v1/elders",
         headers=headers,
         json={
-            "full_name": "Cu Ong",
+            "emergency_contact_name": "Test contact", "emergency_contact_phone": "0900000000", "full_name": "Cu Ong",
             "date_of_birth": "1940-01-01",
             "diagnosed_conditions": ["Tang huyet ap"],
             "current_medications_note": "Theo don bac si",
@@ -57,6 +57,8 @@ async def test_invitation_assignment_schedule_and_idempotent_response(client, db
         json={"full_name": None},
     )
     assert invalid_elder_update.status_code == 422
+    from conftest import register_test_account
+    caregiver_id = await register_test_account("helper@care.example.com", name="Co Lan")
     invitation = await client.post(
         "/api/v1/care-groups/current/invitations",
         headers=headers,
@@ -76,17 +78,9 @@ async def test_invitation_assignment_schedule_and_idempotent_response(client, db
         },
     )
     assert wrong_email.status_code == 403
-    caregiver = await client.post(
-        "/api/v1/auth/register-caregiver",
-        json={
-            "full_name": "Co Lan",
-            "email": "helper@care.example.com",
-            "password": "caregiver-password",
-            "invitation_token": token,
-        },
-    )
-    assert caregiver.status_code == 201, caregiver.text
-    caregiver_id = caregiver.json()["user"]["id"]
+    await login(client, "helper@care.example.com", "caregiver-password")
+    caregiver = await client.post(f"/api/v1/invitations/{token}/accept")
+    assert caregiver.status_code == 200, caregiver.text
 
     assert (await client.get(f"/api/v1/elders/{elder_id}", headers=headers)).status_code == 404
     cannot_create = await client.post(

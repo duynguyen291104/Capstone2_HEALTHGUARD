@@ -79,6 +79,10 @@ function ElderForm({ elder, onSaved, onClose, onBusyChange }: { elder?: Elder | 
     if (saving) return;
     if (!values.full_name.trim()) return setError("Hãy nhập họ tên người được chăm sóc.");
     if (values.full_name.trim().length > 150) return setError("Họ tên tối đa 150 ký tự.");
+    if (!values.emergency_contact_name.trim()) return setError("Hãy nhập người liên hệ khẩn cấp.");
+    const contactPhone = values.emergency_contact_phone.trim();
+    const phoneDigits = contactPhone.replace(/[^0-9]/g, "").length;
+    if (!/^\+?[0-9 ().-]+$/.test(contactPhone) || phoneDigits < 8 || phoneDigits > 15) return setError("Số điện thoại khẩn cấp cần có từ 8 đến 15 chữ số.");
     const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh" }).format(new Date());
     if (values.date_of_birth && (!isCalendarDate(values.date_of_birth) || values.date_of_birth > today)) return setError("Ngày sinh phải hợp lệ và không ở tương lai.");
     const conditions = [...new Set(values.diagnosed_conditions.split(/[,\n]/).map(item => item.trim()).filter(Boolean))];
@@ -135,8 +139,8 @@ function ElderForm({ elder, onSaved, onClose, onBusyChange }: { elder?: Elder | 
       <TextareaField label="Thuốc đang sử dụng (ghi chú)" maxLength={3000} disabled={saving} value={values.current_medications_note} onChange={(event) => update("current_medications_note", event.target.value)} />
       <TextareaField label="Thói quen ngủ" maxLength={2000} disabled={saving} value={values.sleep_habits} onChange={(event) => update("sleep_habits", event.target.value)} />
       <div className="field-pair">
-        <Field label="Người liên hệ khẩn cấp" maxLength={150} disabled={saving} value={values.emergency_contact_name} onChange={(event) => update("emergency_contact_name", event.target.value)} />
-        <Field label="Số điện thoại" type="tel" maxLength={30} disabled={saving} value={values.emergency_contact_phone} onChange={(event) => update("emergency_contact_phone", event.target.value)} />
+        <Field label="Người liên hệ khẩn cấp *" required maxLength={150} disabled={saving} value={values.emergency_contact_name} onChange={(event) => update("emergency_contact_name", event.target.value)} />
+        <Field label="Số điện thoại khẩn cấp *" required type="tel" maxLength={30} disabled={saving} value={values.emergency_contact_phone} onChange={(event) => update("emergency_contact_phone", event.target.value)} />
       </div>
       <div className="form-actions form-grid__full">
         <Button type="button" variant="secondary" disabled={saving} onClick={onClose}>Hủy</Button>
