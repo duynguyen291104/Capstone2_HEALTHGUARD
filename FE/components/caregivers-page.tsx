@@ -6,6 +6,7 @@ import { Button, EmptyState, ErrorNotice, Field, Modal, PageHeader, SelectField,
 import { careApi, eldersApi, getErrorMessage } from "@/lib/api";
 import type { CaregiverAssignment, CareGroupMember, Elder, Invitation, InvitationSummary } from "@/lib/types";
 import { useAuth } from "@/components/auth-provider";
+import { RoomCodePanel } from "@/components/room-code-panel";
 
 function InviteForm({ onCreated, onClose, onBusyChange }: { onCreated: (invitation: Invitation) => void; onClose: () => void; onBusyChange: (busy: boolean) => void }) {
   const [email, setEmail] = useState("");
@@ -270,6 +271,7 @@ export function CaregiversPage() {
         description="Mời người chăm sóc bằng tài khoản riêng rồi phân công đúng hồ sơ họ cần hỗ trợ."
         action={<div className="form-actions"><Button type="button" variant="secondary" loading={loading} onClick={reloadPage}><RefreshCw size={17} /> Làm mới</Button><Button onClick={() => setInviteOpen(true)}><MailPlus size={18} /> Mời người chăm sóc</Button></div>}
       />
+      <RoomCodePanel />
       <div className="info-strip"><ShieldCheck size={19} /><p>Mỗi người dùng tài khoản riêng để hệ thống ghi nhận chính xác ai đã thao tác. Bạn có thể thu hồi quyền bất cứ lúc nào.</p></div>
       {error ? <ErrorNotice message={error} /> : null}
       {!loading && pendingInvitations.length ? (
@@ -316,7 +318,7 @@ export function CaregiversPage() {
         </div>
       )}
       {inviteOpen ? (
-        <Modal dismissible={!inviteBusy} title={invitation ? "Gửi liên kết mời" : "Mời người chăm sóc"} description={invitation ? "Liên kết chỉ dành cho đúng email đã nhập." : "Người chăm sóc sẽ tự tạo mật khẩu cho tài khoản của họ."} onClose={closeInvite}>
+        <Modal dismissible={!inviteBusy} title={invitation ? "Chia sẻ liên kết mời" : "Mời người chăm sóc"} description={invitation ? "Sao chép và tự gửi liên kết. HealthGuard chưa gửi email tự động." : "Nhập email của một tài khoản HealthGuard đã đăng ký và chưa thuộc nhóm nào."} onClose={closeInvite}>
           {invitation ? <InviteResult invitation={invitation} onClose={closeInvite} /> : <InviteForm onCreated={invitationCreated} onBusyChange={setInviteBusy} onClose={closeInvite} />}
         </Modal>
       ) : null}

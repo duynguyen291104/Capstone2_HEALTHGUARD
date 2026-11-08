@@ -24,7 +24,7 @@ async def setup_schedule(client, *, clock="08:00:30", days=None):
     assert owner.status_code == 201, owner.text
     group = await client.post("/api/v1/care-groups", json={"name": "Regression only"})
     headers = {"X-Care-Group-ID": group.json()["id"]}
-    elder = await client.post("/api/v1/elders", headers=headers, json={"full_name": "Fictional elder"})
+    elder = await client.post("/api/v1/elders", headers=headers, json={"emergency_contact_name": "Test contact", "emergency_contact_phone": "0900000000", "full_name": "Fictional elder"})
     schedule = await client.post(f"/api/v1/elders/{elder.json()['id']}/medication-schedules", headers=headers, json={
         "medication_name": "Demo 10mg", "dose_amount": "10", "dose_unit": "vien",
         "start_date": "2026-10-01", "time_of_day": clock,

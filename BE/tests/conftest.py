@@ -16,6 +16,13 @@ from app.database import Base, get_db  # noqa: E402
 from app.main import app  # noqa: E402
 
 
+async def register_test_account(email: str, *, name: str = "Test caregiver", password: str = "caregiver-password"):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as guest:
+        response = await guest.post("/api/v1/auth/register", json={"email": email, "full_name": name, "password": password})
+        assert response.status_code == 201, response.text
+        return response.json()["user"]["id"]
+
+
 @pytest_asyncio.fixture
 async def db_factory():
     engine = create_async_engine(

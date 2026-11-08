@@ -36,7 +36,7 @@ async def household(client):
     group = await client.post("/api/v1/care-groups", json={"name": "Nhóm kiểm thử"})
     assert group.status_code == 201, group.text
     elder = await client.post("/api/v1/elders", json={
-        "full_name": "Bà mẫu", "diagnosed_conditions": ["Thông tin chẩn đoán"],
+        "emergency_contact_name": "Test contact", "emergency_contact_phone": "0900000000", "full_name": "Bà mẫu", "diagnosed_conditions": ["Thông tin chẩn đoán"],
         "current_medications_note": "Thông tin thuốc cần bảo vệ",
     })
     assert elder.status_code == 201, elder.text
@@ -44,13 +44,14 @@ async def household(client):
 
 
 async def helper(owner, caregiver, email="helper-regression@example.com"):
-    invitation = await owner.post("/api/v1/care-groups/current/invitations", json={"email": email})
-    assert invitation.status_code == 201, invitation.text
-    registered = await caregiver.post("/api/v1/auth/register-caregiver", json={
+    registered = await caregiver.post("/api/v1/auth/register", json={
         "full_name": "Người chăm sóc", "email": email, "password": "helper-safe-password",
-        "invitation_token": invitation.json()["invitation_token"],
     })
     assert registered.status_code == 201, registered.text
+    invitation = await owner.post("/api/v1/care-groups/current/invitations", json={"email": email})
+    assert invitation.status_code == 201, invitation.text
+    accepted = await caregiver.post(f"/api/v1/invitations/{invitation.json()['invitation_token']}/accept")
+    assert accepted.status_code == 200, accepted.text
     return registered.json()["user"]["id"], invitation.json()
 
 
@@ -124,9 +125,15 @@ async def test_registration_insert_conflict_returns_409_without_partial_user(cli
     payload = account(target)
     endpoint = "/api/v1/auth/register"
     if caregiver_registration:
-        await household(client)
-        invitation = await client.post("/api/v1/care-groups/current/invitations", json={"email": target})
-        payload["invitation_token"] = invitation.json()["invitation_token"]
+        from app.models import GroupRole
+        from app.security import generate_invitation_token, hash_invitation_token
+        owner_id, group_id, _ = await household(client)
+        token = generate_invitation_token()
+        # Legacy links issued before account-existence checks still work.
+        async with db_factory() as db:
+            db.add(Invitation(group_id=uuid.UUID(group_id), email=target, role=GroupRole.CAREGIVER, token_hash=hash_invitation_token(token), expires_at=datetime.now(UTC) + timedelta(hours=1), invited_by_user_id=uuid.UUID(owner_id)))
+            await db.commit()
+        payload["invitation_token"] = token
         endpoint = "/api/v1/auth/register-caregiver"
         await client.post("/api/v1/auth/logout")
     original = AsyncSession.flush
@@ -146,6 +153,9 @@ async def test_registration_insert_conflict_returns_409_without_partial_user(cli
 
 
 async def test_invitation_reissue_expiry_revoke_and_single_use_lifecycle(client, db_factory):
+    from conftest import register_test_account
+    await register_test_account("invited@example.com")
+    await register_test_account("expired@example.com")
     _, group_id, _ = await household(client)
     first = await client.post("/api/v1/care-groups/current/invitations", json={"email": "invited@example.com"})
     second = await client.post("/api/v1/care-groups/current/invitations", json={"email": "INVITED@example.com"})
@@ -156,8 +166,7 @@ async def test_invitation_reissue_expiry_revoke_and_single_use_lifecycle(client,
     listed = await client.get("/api/v1/care-groups/current/invitations")
     assert all("token_hash" not in row and "invitation_token" not in row for row in listed.json())
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as caregiver:
-        helper_account = account("invited@example.com")
-        await caregiver.post("/api/v1/auth/register", json=helper_account)
+        await caregiver.post("/api/v1/auth/login", json={"email": "invited@example.com", "password": "caregiver-password"})
         accepted = await caregiver.post(f"/api/v1/invitations/{second.json()['invitation_token']}/accept")
         assert accepted.status_code == 200
         assert (await caregiver.post(f"/api/v1/invitations/{second.json()['invitation_token']}/accept")).status_code == 409
@@ -205,12 +214,14 @@ async def test_caregiver_permission_matrix_protects_diagnosis_and_medication_not
         assert response.status_code == 403
         assert (await caregiver.patch(f"/api/v1/elders/{elder_id}", json={"full_name": "Changed"})).status_code == 403
         assert (await caregiver.get(f"/api/v1/elders/{elder_id}/caregivers")).status_code == 403
-        other = await client.post("/api/v1/elders", json={"full_name": "Chưa phân công"})
+        other = await client.post("/api/v1/elders", json={"emergency_contact_name": "Test contact", "emergency_contact_phone": "0900000000", "full_name": "Chưa phân công"})
         assert (await caregiver.get(f"/api/v1/elders/{other.json()['id']}")).status_code == 404
         assert (await caregiver.get("/api/v1/elders", headers={"X-Care-Group-ID": str(uuid.uuid4())})).json()["error"]["code"] == "GROUP_ACCESS_DENIED"
 
 
 async def test_foreign_household_ids_never_grant_member_invitation_or_elder_access(client):
+    from conftest import register_test_account
+    await register_test_account("foreign-helper@example.com")
     _, group_id, elder_id = await household(client)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as other:
         registered = await other.post("/api/v1/auth/register", json=account("other-owner@example.com"))

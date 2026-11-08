@@ -11,6 +11,7 @@ import {
   Settings,
   UserRoundCog,
   UsersRound,
+  Video,
   X,
 } from "lucide-react";
 import Link from "next/link";
@@ -26,6 +27,7 @@ const navItems = [
   { href: "/nguoi-duoc-cham-soc", label: "Người được chăm sóc", shortLabel: "Hồ sơ", icon: UsersRound },
   { href: "/nguoi-cham-soc", label: "Người chăm sóc", shortLabel: "Chăm sóc", icon: UserRoundCog, ownerOnly: true },
   { href: "/lich-thuoc", label: "Thuốc & lịch uống", shortLabel: "Lịch thuốc", icon: Pill },
+  { href: "/te-nga", label: "Phát hiện té ngã", shortLabel: "Té ngã", icon: Video },
   { href: "/thong-bao", label: "Kết nối thông báo", shortLabel: "Thông báo", icon: BellRing },
 ];
 
@@ -237,7 +239,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
           const Icon = item.icon;
           return (
-            <Link key={item.href} href={item.href} className={active ? "bottom-nav__link bottom-nav__link--active" : "bottom-nav__link"}>
+            <Link key={item.href} href={item.href} aria-current={active ? "page" : undefined} className={active ? "bottom-nav__link bottom-nav__link--active" : "bottom-nav__link"}>
               <Icon size={19} aria-hidden="true" />
               <span>{item.shortLabel ?? item.label}</span>
             </Link>

@@ -26,8 +26,12 @@ from app.schemas import (
     InvitationCreated,
     InvitationOut,
     MemberOut,
+    RoomCodeCreate,
+    RoomCodeOut,
+    RoomJoin,
 )
-from app.security import generate_invitation_token, hash_invitation_token
+from app.security import generate_invitation_token, hash_invitation_token, hash_password, verify_password
+from starlette.concurrency import run_in_threadpool
 
 
 router = APIRouter(prefix="/care-groups", tags=["care-groups"])
@@ -86,6 +90,66 @@ async def list_members(context: OwnerCtx, db: DbSession) -> list[MemberOut]:
     ]
 
 
+@router.post("/current/room-code", response_model=RoomCodeOut)
+async def issue_room_code(payload: RoomCodeCreate, context: OwnerCtx, user: CurrentUser, db: DbSession, response: Response) -> RoomCodeOut:
+    password_hash = await run_in_threadpool(hash_password, payload.password) if payload.password else None
+    group = await db.scalar(select(CareGroup).where(CareGroup.id == context.group_id).with_for_update())
+    if group is None:
+        raise not_found("Nhóm chăm sóc")
+    code = generate_invitation_token()
+    expires_at = datetime.now(UTC) + timedelta(hours=24)
+    group.join_code_hash = hash_invitation_token(code)
+    group.join_password_hash = password_hash
+    group.join_expires_at = expires_at
+    group.join_failed_attempts = 0
+    add_audit(db, group_id=group.id, actor_user_id=user.id, action="ROOM_CODE_ISSUED", entity_type="care_group", entity_id=group.id)
+    await db.commit()
+    response.headers["Cache-Control"] = "no-store"
+    return RoomCodeOut(code=code, expires_at=expires_at)
+
+
+@router.delete("/current/room-code", status_code=204)
+async def revoke_room_code(context: OwnerCtx, user: CurrentUser, db: DbSession) -> Response:
+    group = await db.scalar(select(CareGroup).where(CareGroup.id == context.group_id).with_for_update())
+    if group is None:
+        raise not_found("Nhóm chăm sóc")
+    group.join_code_hash = group.join_password_hash = None
+    group.join_expires_at = group.join_failed_attempts = None
+    add_audit(db, group_id=group.id, actor_user_id=user.id, action="ROOM_CODE_REVOKED", entity_type="care_group", entity_id=group.id)
+    await db.commit()
+    return Response(status_code=204)
+
+
+@router.post("/join", response_model=GroupSummary)
+async def join_room(payload: RoomJoin, user: CurrentUser, db: DbSession) -> GroupSummary:
+    group = await db.scalar(select(CareGroup).where(CareGroup.join_code_hash == hash_invitation_token(payload.code)).with_for_update())
+    if group is None or group.join_expires_at is None:
+        raise AppError(404, "ROOM_CODE_INVALID", "Mã phòng không hợp lệ hoặc đã hết hạn")
+    expires = group.join_expires_at
+    if expires.tzinfo is None:
+        expires = expires.replace(tzinfo=UTC)
+    if expires <= datetime.now(UTC):
+        raise AppError(404, "ROOM_CODE_INVALID", "Mã phòng không hợp lệ hoặc đã hết hạn")
+    await db.scalar(select(User.id).where(User.id == user.id).with_for_update())
+    if await db.scalar(select(CareGroupMember.id).where(CareGroupMember.user_id == user.id)):
+        raise AppError(409, "GROUP_ALREADY_EXISTS", "Tài khoản đã thuộc một nhóm chăm sóc")
+    if group.join_password_hash:
+        if not payload.password:
+            raise AppError(403, "ROOM_PASSWORD_REQUIRED", "Phòng này cần mật khẩu do chủ nhóm cung cấp")
+        failures = group.join_failed_attempts or 0
+        if failures >= 5:
+            raise AppError(429, "ROOM_CODE_LOCKED", "Mã phòng đã khóa vì nhập sai nhiều lần. Hãy xin mã mới.")
+        if not await run_in_threadpool(verify_password, payload.password, group.join_password_hash):
+            group.join_failed_attempts = failures + 1
+            await db.commit()
+            raise AppError(403, "ROOM_PASSWORD_INCORRECT", "Mật khẩu phòng không đúng")
+    db.add(CareGroupMember(group_id=group.id, user_id=user.id, role=GroupRole.CAREGIVER))
+    add_audit(db, group_id=group.id, actor_user_id=user.id, action="CARE_GROUP_JOINED_BY_CODE", entity_type="care_group", entity_id=group.id)
+    result = GroupSummary(id=group.id, name=group.name, role=GroupRole.CAREGIVER)
+    await db.commit()
+    return result
+
+
 @router.post(
     "/current/invitations", response_model=InvitationCreated, status_code=status.HTTP_201_CREATED
 )
@@ -99,13 +163,14 @@ async def create_invitation(
     # otherwise two concurrent creates can both leave a usable invitation.
     await db.scalar(select(CareGroup.id).where(CareGroup.id == context.group_id).with_for_update())
     email = str(payload.email).strip().lower()
+    invited_user = await db.scalar(select(User.id).where(User.email == email, User.is_active.is_(True)))
+    if invited_user is None:
+        raise AppError(404, "INVITED_ACCOUNT_NOT_FOUND", "Email này không có tài khoản trong HealthGuard. Hãy yêu cầu người chăm sóc đăng ký trước.")
     existing_member = await db.scalar(
-        select(CareGroupMember.id)
-        .join(User, User.id == CareGroupMember.user_id)
-        .where(CareGroupMember.group_id == context.group_id, User.email == email)
+        select(CareGroupMember.group_id).where(CareGroupMember.user_id == invited_user)
     )
     if existing_member:
-        raise AppError(409, "ALREADY_A_MEMBER", "Email này đã thuộc nhóm chăm sóc")
+        raise AppError(409, "ALREADY_A_MEMBER", "Tài khoản này đã thuộc một nhóm chăm sóc")
 
     now = datetime.now(UTC)
     outstanding = (

@@ -7,6 +7,7 @@ from typing import Annotated
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import (
+    ValidationInfo,
     BaseModel,
     ConfigDict,
     EmailStr,
@@ -108,6 +109,20 @@ class CareGroupCreate(BaseModel):
     name: Name
 
 
+class RoomCodeCreate(BaseModel):
+    password: Password | None = None
+
+
+class RoomJoin(BaseModel):
+    code: Annotated[str, StringConstraints(strip_whitespace=True, min_length=32, max_length=100)]
+    password: Password | None = None
+
+
+class RoomCodeOut(ResponseModel):
+    code: str
+    expires_at: datetime
+
+
 class AuthOut(BaseModel):
     user: UserOut
     groups: list[GroupSummary]
@@ -167,8 +182,17 @@ class ElderCreate(BaseModel):
     current_medications_note: str | None = Field(default=None, max_length=3000)
     mobility_level: MobilityLevel | None = None
     sleep_habits: str | None = Field(default=None, max_length=2000)
-    emergency_contact_name: str | None = Field(default=None, max_length=150)
-    emergency_contact_phone: str | None = Field(default=None, max_length=30)
+    emergency_contact_name: Name
+    emergency_contact_phone: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=30)]
+
+    @field_validator("emergency_contact_phone")
+    @classmethod
+    def validate_contact_phone(cls, value: str) -> str:
+        import re
+
+        if not re.fullmatch(r"\+?[0-9 ().-]+", value) or not 8 <= sum(char.isdigit() for char in value) <= 15:
+            raise ValueError("Số điện thoại khẩn cấp cần có từ 8 đến 15 chữ số")
+        return value
 
     @field_validator("date_of_birth")
     @classmethod
@@ -199,6 +223,14 @@ class ElderUpdate(BaseModel):
     emergency_contact_name: str | None = Field(default=None, max_length=150)
     emergency_contact_phone: str | None = Field(default=None, max_length=30)
     is_active: bool | None = None
+
+    @field_validator("emergency_contact_name", "emergency_contact_phone")
+    @classmethod
+    def validate_contact(cls, value: str | None, info: ValidationInfo) -> str:
+        if not value or not value.strip():
+            raise ValueError("Không được bỏ trống liên hệ khẩn cấp")
+        value = value.strip()
+        return ElderCreate.validate_contact_phone(value) if info.field_name == "emergency_contact_phone" else value
 
     @field_validator("date_of_birth")
     @classmethod

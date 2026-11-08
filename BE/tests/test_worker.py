@@ -32,7 +32,7 @@ async def test_worker_marks_overdue_unconfirmed_and_does_not_duplicate_escalatio
     )
     headers = {"X-Care-Group-ID": group_id}
     elder = await client.post(
-        "/api/v1/elders", headers=headers, json={"full_name": "Cu Ba"}
+        "/api/v1/elders", headers=headers, json={"emergency_contact_name": "Test contact", "emergency_contact_phone": "0900000000", "full_name": "Cu Ba"}
     )
     schedule = await client.post(
         f"/api/v1/elders/{elder.json()['id']}/medication-schedules",
@@ -79,7 +79,7 @@ async def test_worker_skips_missed_reminders_instead_of_replaying_a_burst(client
     )
     headers = {"X-Care-Group-ID": group_id}
     elder = await client.post(
-        "/api/v1/elders", headers=headers, json={"full_name": "Cu Ong"}
+        "/api/v1/elders", headers=headers, json={"emergency_contact_name": "Test contact", "emergency_contact_phone": "0900000000", "full_name": "Cu Ong"}
     )
     schedule = await client.post(
         f"/api/v1/elders/{elder.json()['id']}/medication-schedules",
@@ -127,7 +127,7 @@ async def test_stopping_schedule_cancels_due_work_and_pending_notifications(clie
     )
     headers = {"X-Care-Group-ID": group_id}
     elder = await client.post(
-        "/api/v1/elders", headers=headers, json={"full_name": "Cu Ba"}
+        "/api/v1/elders", headers=headers, json={"emergency_contact_name": "Test contact", "emergency_contact_phone": "0900000000", "full_name": "Cu Ba"}
     )
     schedule = await client.post(
         f"/api/v1/elders/{elder.json()['id']}/medication-schedules",

@@ -132,6 +132,10 @@ class CareGroup(TimestampMixin, Base):
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(150), nullable=False)
+    join_code_hash: Mapped[str | None] = mapped_column(String(64), unique=True, index=True)
+    join_password_hash: Mapped[str | None] = mapped_column(String(255))
+    join_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    join_failed_attempts: Mapped[int | None] = mapped_column(Integer)
     created_by_user_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
     )

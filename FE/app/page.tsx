@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ArrowRight, Camera, ClipboardList, Pill } from "lucide-react";
 import { Brand } from "@/components/brand";
 
 export default function LandingPage() {
@@ -11,23 +12,17 @@ export default function LandingPage() {
       </div>
     </nav>
     <section className="landing-content">
-      <h1>Quản lý chăm sóc và lịch thuốc</h1>
-      <p>HealthGuard giúp chủ nhóm và người chăm sóc theo dõi hồ sơ, lịch dùng thuốc và kết quả từng lần thực hiện.</p>
-      <div className="landing-actions">
-        <Link className="button button--primary" href="/dang-nhap">Mở ứng dụng</Link>
-        <Link className="button button--secondary" href="/dang-ky">Tạo tài khoản</Link>
+      <div className="landing-intro">
+        <span className="landing-tag">Chăm sóc tại nhà</span>
+        <h1>Việc chăm sóc mỗi ngày, trong một nơi.</h1>
+        <p>Theo dõi lịch thuốc, chia sẻ công việc với người chăm sóc và mở công cụ hỗ trợ phát hiện té ngã.</p>
+        <Link className="button button--primary" href="/dang-nhap">Mở ứng dụng <ArrowRight size={17} aria-hidden="true" /></Link>
       </div>
-      <div className="landing-scope">
-        <h2>Các chức năng hiện có</h2>
-        <ul>
-          <li>Quản lý hồ sơ người được chăm sóc.</li>
-          <li>Mời người chăm sóc và cấp quyền theo từng hồ sơ.</li>
-          <li>Nhập lịch thuốc thủ công hoặc từ ảnh đơn thuốc đã kiểm tra.</li>
-          <li>Xác nhận từng lần dùng thuốc và nhận nhắc qua Telegram nếu đã liên kết.</li>
-          <li>Chỉnh sửa thông tin tài khoản và đổi mật khẩu.</li>
-        </ul>
-        <p className="muted">Chủ nhóm tạo nhóm chăm sóc sau khi đăng ký. Người chăm sóc tham gia bằng đường dẫn mời của chủ nhóm.</p>
-      </div>
+      <section className="landing-features" aria-label="Các chức năng HealthGuard">
+        <article><span className="feature-icon"><ClipboardList size={22} aria-hidden="true" /></span><h2>Hồ sơ chăm sóc</h2><p>Mời người chăm sóc, phân công và cấp quyền theo từng hồ sơ.</p></article>
+        <article><span className="feature-icon feature-icon--blue"><Pill size={22} aria-hidden="true" /></span><h2>Lịch thuốc và OCR</h2><p>Đọc ảnh đơn để điền nháp, xác nhận từng lần uống và nhận nhắc khi đã liên kết Telegram.</p></article>
+        <article><span className="feature-icon feature-icon--peach"><Camera size={22} aria-hidden="true" /></span><h2>Phát hiện té ngã</h2><p>Kiểm tra webcam và mở bảng phân tích video FallGuard ngay trong ứng dụng.</p></article>
+      </section>
     </section>
     <footer className="landing-footer">Hệ thống hỗ trợ theo dõi; không thay thế chỉ định của bác sĩ hoặc dược sĩ.</footer>
   </main>;

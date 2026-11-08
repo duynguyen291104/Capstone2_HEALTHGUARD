@@ -14,7 +14,7 @@ async def test_import_retry_acknowledges_same_schedule_and_rejects_changed_paylo
     assert register.status_code == 201
     group = await client.post("/api/v1/care-groups", json={"name": "Import test"})
     headers = {"X-Care-Group-ID": group.json()["id"], "Idempotency-Key": str(uuid.uuid4())}
-    elder = await client.post("/api/v1/elders", headers=headers, json={"full_name": "Fictional elder"})
+    elder = await client.post("/api/v1/elders", headers=headers, json={"emergency_contact_name": "Test contact", "emergency_contact_phone": "0900000000", "full_name": "Fictional elder"})
     url = f"/api/v1/elders/{elder.json()['id']}/medication-schedules"
     payload = {
         "medication_name": "Demonstration A", "dose_amount": "1", "dose_unit": "vien",
@@ -29,7 +29,7 @@ async def test_import_retry_acknowledges_same_schedule_and_rejects_changed_paylo
     changed = await client.post(url, headers=headers, json={**payload, "dose_amount": "2"})
     assert changed.status_code == 409
     assert changed.json()["error"]["code"] == "IMPORT_ALREADY_SAVED"
-    other_elder = await client.post("/api/v1/elders", headers=headers, json={"full_name": "Other fictional elder"})
+    other_elder = await client.post("/api/v1/elders", headers=headers, json={"emergency_contact_name": "Test contact", "emergency_contact_phone": "0900000000", "full_name": "Other fictional elder"})
     reused = await client.post(f"/api/v1/elders/{other_elder.json()['id']}/medication-schedules", headers=headers, json=payload)
     assert reused.status_code == 409
     invalid = await client.post(url, headers={**headers, "Idempotency-Key": "invalid"}, json=payload)
@@ -48,7 +48,7 @@ async def test_schedule_creation_without_import_key_keeps_existing_behavior(clie
     })
     group = await client.post("/api/v1/care-groups", json={"name": "Regular test"})
     headers = {"X-Care-Group-ID": group.json()["id"]}
-    elder = await client.post("/api/v1/elders", headers=headers, json={"full_name": "Fictional elder"})
+    elder = await client.post("/api/v1/elders", headers=headers, json={"emergency_contact_name": "Test contact", "emergency_contact_phone": "0900000000", "full_name": "Fictional elder"})
     result = await client.post(f"/api/v1/elders/{elder.json()['id']}/medication-schedules", headers=headers, json={
         "medication_name": "Demonstration B", "dose_amount": "1", "dose_unit": "vien",
         "start_date": "2026-10-04", "time_of_day": "08:00:00",

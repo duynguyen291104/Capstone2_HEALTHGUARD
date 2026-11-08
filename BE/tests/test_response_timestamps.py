@@ -43,6 +43,8 @@ async def test_sqlite_api_invites_and_nested_dose_history_return_explicit_utc(cl
         "full_name": "Chủ nhóm", "email": "timestamps@example.com", "password": "safe-password-123",
     })
     await client.post("/api/v1/care-groups", json={"name": "Nhóm thời gian"})
+    from conftest import register_test_account
+    await register_test_account("timestamp-helper@example.com")
     invitation = await client.post("/api/v1/care-groups/current/invitations", json={"email": "timestamp-helper@example.com"})
     public = await client.get(f"/api/v1/invitations/{invitation.json()['invitation_token']}")
     listing = await client.get("/api/v1/care-groups/current/invitations")
@@ -51,7 +53,7 @@ async def test_sqlite_api_invites_and_nested_dose_history_return_explicit_utc(cl
     timestamp(listing.json()[0]["created_at"])
     members = await client.get("/api/v1/care-groups/current/members")
     timestamp(members.json()[0]["joined_at"])
-    elder = await client.post("/api/v1/elders", json={"full_name": "Bà mẫu"})
+    elder = await client.post("/api/v1/elders", json={"emergency_contact_name": "Test contact", "emergency_contact_phone": "0900000000", "full_name": "Bà mẫu"})
     timestamp(elder.json()["created_at"])
     timestamp(elder.json()["updated_at"])
     schedule = await client.post(f"/api/v1/elders/{elder.json()['id']}/medication-schedules", json={
