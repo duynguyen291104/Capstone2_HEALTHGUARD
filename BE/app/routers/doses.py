@@ -23,8 +23,10 @@ from app.models import (
     Medication,
     MedicationSchedule,
     NotificationAttempt,
+    NotificationKind,
 )
 from app.schemas import DoseOccurrenceOut, DoseResponseCreate, DoseResponseOut
+from app.services.scheduler import enqueue_attempts, owner_recipients
 
 
 router = APIRouter(prefix="/dose-occurrences", tags=["dose-occurrences"])
@@ -267,6 +269,13 @@ async def respond_to_occurrence(
             error="Dose already responded",
         )
     )
+    if context.role == GroupRole.CAREGIVER and payload.status == DoseResponseType.ADMINISTERED:
+        # Save the receipt and its notification in the same transaction.
+        # An idempotent repeat returns above without enqueueing another message.
+        await enqueue_attempts(
+            db, occurrence.id, await owner_recipients(db, context.group_id),
+            NotificationKind.DOSE_CONFIRMED, 1, now,
+        )
     add_audit(
         db,
         group_id=context.group_id,

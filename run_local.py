@@ -7,6 +7,7 @@ import json
 import os
 import queue
 import re
+import secrets
 import shutil
 import socket
 import subprocess
@@ -24,6 +25,8 @@ from dotenv import dotenv_values
 ROOT = Path(__file__).resolve().parent
 BACKEND_DIR = ROOT / "BE"
 FRONTEND_DIR = ROOT / "FE"
+AI_DIR = ROOT / "AI"
+AI_PYTHON = AI_DIR / ".venv" / "Scripts" / "python.exe"
 ENV_PATH = BACKEND_DIR / ".env"
 PYTHON = BACKEND_DIR / ".venv" / "Scripts" / "python.exe"
 SSH = Path(os.environ.get("WINDIR", r"C:\Windows")) / "System32" / "OpenSSH" / "ssh.exe"
@@ -176,6 +179,7 @@ def main(argv: list[str] | None = None) -> int:
             reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--local-only", action="store_true", help="Chạy web/API/worker; tắt Telegram cho lượt chạy này, không cần SSH/Internet.")
+    parser.add_argument("--with-ai", action="store_true", help="Chạy thêm dịch vụ AI nội bộ ở cổng 8001.")
     options = parser.parse_args(argv)
 
     require_file(PYTHON, "Python virtual environment BE/.venv (cài backend trước)")
@@ -183,9 +187,23 @@ def main(argv: list[str] | None = None) -> int:
     require_free_port(8000)
     require_free_port(3000)
     child_env = os.environ.copy()
+    ai_enabled = options.with_ai
+    if ai_enabled:
+        try:
+            require_file(AI_PYTHON, "môi trường AI/.venv (chạy AI/scripts/bootstrap.ps1 trước)")
+            require_free_port(8001)
+        except RuntimeError as exc:
+            print(f"Không bật được AI: {exc} Web và lịch thuốc vẫn chạy.", flush=True)
+            ai_enabled = False
+    if ai_enabled:
+        child_env["FALLGUARD_SERVICE_KEY"] = secrets.token_urlsafe(32)
+        child_env["FALLGUARD_CAMERA_CODE"] = secrets.token_urlsafe(12)
+        child_env["FALLGUARD_SERVICE_PORT"] = "8001"
     if options.local_only:
         child_env.update({key: "" for key in TELEGRAM_ENV_KEYS})
     frontend_env = child_env.copy()
+    frontend_env.pop("FALLGUARD_SERVICE_KEY", None)
+    frontend_env.pop("FALLGUARD_CAMERA_CODE", None)
     if PORTABLE_NODE.is_dir():
         frontend_env["PATH"] = f"{PORTABLE_NODE}{os.pathsep}{frontend_env.get('PATH', '')}"
     node = shutil.which("node.exe" if os.name == "nt" else "node", path=frontend_env.get("PATH"))
@@ -197,6 +215,7 @@ def main(argv: list[str] | None = None) -> int:
     core: list[tuple[str, subprocess.Popen]] = []
     tunnel: subprocess.Popen | None = None
     public_url: str | None = None
+    ai: subprocess.Popen | None = None
     try:
         print("[1/4] Đang chạy backend...", flush=True)
         backend = launch_process([str(PYTHON), "-m", "uvicorn", "app.main:app", "--port", "8000"], cwd=BACKEND_DIR, env=child_env)
@@ -208,6 +227,18 @@ def main(argv: list[str] | None = None) -> int:
         worker = launch_process([str(PYTHON), "-m", "app.worker"], cwd=BACKEND_DIR, env=child_env)
         started.append(worker)
         core.append(("Worker nhắc thuốc", worker))
+        if ai_enabled:
+            print("Đang chạy FallGuard nội bộ...", flush=True)
+            try:
+                # The AI service needs only its own server key, not a Telegram bot token.
+                ai_env = {name: value for name, value in os.environ.items()
+                          if name.upper() not in {*TELEGRAM_ENV_KEYS, "DATABASE_URL", "JWT_SECRET"}
+                          and not name.upper().startswith("FALLGUARD_")}
+                ai_env["FALLGUARD_SERVICE_KEY"] = child_env["FALLGUARD_SERVICE_KEY"]
+                ai = launch_process([str(AI_PYTHON), str(AI_DIR / "healthguard_service.py")], cwd=AI_DIR, env=ai_env)
+                started.append(ai)
+            except OSError:
+                print("Không khởi động được AI. Web và lịch thuốc vẫn chạy.", flush=True)
         print("[3/4] Đang chạy frontend...", flush=True)
         # Launch Node directly. There is no npm.cmd wrapper that can exit early
         # and leave a Next.js process outside our known child PID tree.
@@ -246,10 +277,15 @@ def main(argv: list[str] | None = None) -> int:
         print("\nHealthGuard đã sẵn sàng:")
         print("  Website: http://localhost:3000")
         print("  API docs: http://localhost:8000/docs")
+        if ai is not None and ai.poll() is None:
+            print(f"  Mã bật camera (chỉ chia sẻ cho người được phép): {child_env['FALLGUARD_CAMERA_CODE']}")
         print(f"  Telegram webhook: {public_url}" if public_url else "  Telegram webhook: chưa bật")
         print("Giữ cửa sổ này mở. Nhấn Ctrl+C để tắt các tiến trình đã mở.", flush=True)
         while True:
             require_running(core)
+            if ai is not None and ai.poll() is not None:
+                print("FallGuard đã dừng. Web và lịch thuốc vẫn chạy; xem lỗi AI phía trên.", flush=True)
+                ai = None
             if tunnel is not None and tunnel.poll() is not None:
                 print("HTTPS tunnel Telegram đã dừng; web/API/worker vẫn đang chạy. Khởi động lại để kết nối lại webhook.", flush=True)
                 tunnel = None

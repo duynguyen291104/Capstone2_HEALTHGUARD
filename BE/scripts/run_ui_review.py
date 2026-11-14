@@ -8,6 +8,7 @@ owner@review.example.com / caregiver@review.example.com / viewer@review.example.
 import asyncio
 from datetime import UTC, datetime, timedelta
 import os
+import secrets
 from pathlib import Path
 import shutil
 import socket
@@ -26,6 +27,8 @@ os.environ.update({
     "CORS_ORIGINS": '["http://127.0.0.1:3014"]',
     "FRONTEND_BASE_URL": "http://127.0.0.1:3014",
     "TELEGRAM_BOT_TOKEN": "", "TELEGRAM_BOT_USERNAME": "", "TELEGRAM_WEBHOOK_SECRET": "",
+    "FALLGUARD_SERVICE_KEY": secrets.token_urlsafe(32), "FALLGUARD_SERVICE_PORT": "8015",
+    "FALLGUARD_CAMERA_CODE": "",
 })
 
 import uvicorn  # noqa: E402
@@ -123,8 +126,12 @@ def require_unused(port):
 
 
 async def main():
-    for port in (3014, 8014):
+    with_ai = "--with-ai" in sys.argv
+    for port in ((3014, 8014, 8015) if with_ai else (3014, 8014)):
         require_unused(port)
+    ai_python = ROOT / "AI/.venv/Scripts/python.exe"
+    if with_ai and not ai_python.is_file():
+        raise SystemExit("AI environment is missing.")
     node = shutil.which("node") or (str(Path("E:/nodejs/node.exe")) if Path("E:/nodejs/node.exe").is_file() else None)
     if not node:
         raise SystemExit("Node.js is required for UI review")
@@ -134,10 +141,18 @@ async def main():
                                  "--port", "3014", "--hostname", "127.0.0.1"], cwd=ROOT / "FE", env=env,
                                 creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0)
     print("Isolated UI review: http://127.0.0.1:3014 — no real data or Telegram.", flush=True)
+    ai = None
     try:
+        if with_ai:
+            ai = subprocess.Popen([str(ai_python), str(ROOT / "AI/healthguard_service.py")],
+                                  cwd=ROOT / "AI", env={**os.environ, "FALLGUARD_BACKEND_PORT": "8014"},
+                                  creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0)
         server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=8014, log_level="warning"))
         await server.serve()
     finally:
+        if ai is not None and ai.poll() is None:
+            ai.terminate()
+            ai.wait(timeout=10)
         if os.name == "nt":
             subprocess.run(["taskkill", "/PID", str(frontend.pid), "/T", "/F"],
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)

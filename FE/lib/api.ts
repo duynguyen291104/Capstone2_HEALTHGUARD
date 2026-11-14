@@ -174,6 +174,33 @@ export const eldersApi = {
     request<Elder>(`/elders/${id}`, { method: "PATCH", body }),
 };
 
+const fallPath = (elderId: string) => `/elders/${encodeURIComponent(elderId)}/fallguard`;
+
+export type FallEvent = {
+  id: string; source: "camera" | "video"; telegram_status: string;
+  sent: number; failed: number; created_at: string;
+};
+
+export type FallVideoResult = {
+  event_ids: string[]; frames: number; pose_frames: number; predictions: number;
+  bounded: boolean; video_path: string | null;
+};
+
+export const fallApi = {
+  health: (id: string) => request<{ ready: boolean }>(`${fallPath(id)}/health`),
+  history: (id: string) => request<FallEvent[]>(`${fallPath(id)}/events`),
+  startCamera: (id: string, index: number, notify: boolean, deviceCode: string) =>
+    request<{ session_id: string }>(`${fallPath(id)}/camera`, { method: "POST", body: { index, notify, device_code: deviceCode } }),
+  camera: (id: string, session: string, action: "status" | "stop", signal?: AbortSignal) =>
+    request<{ status: string; jpeg: string | null; error: string | null; state: string }>(
+      `${fallPath(id)}/camera/${session}/${action}`, { method: "POST", signal },
+    ),
+  video: (id: string, file: File, suffix: string, urfd: boolean, notify: boolean) =>
+    request<FallVideoResult>(`${fallPath(id)}/video?${new URLSearchParams({
+      suffix, profile: urfd ? "urfd" : "normal", notify: String(notify && !urfd),
+    })}`, { method: "POST", body: file }),
+};
+
 export const careApi = {
   issueRoomCode: (password?: string) => request<{ code: string; expires_at: string }>("/care-groups/current/room-code", { method: "POST", body: { password } }),
   revokeRoomCode: () => request<void>("/care-groups/current/room-code", { method: "DELETE" }),

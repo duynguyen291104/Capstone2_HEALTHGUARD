@@ -105,7 +105,7 @@ JWT_SECRET=<secret-production-riêng>
 
 ## Telegram
 
-Phần thuốc vẫn chạy khi chưa cấu hình Telegram; các lần gửi sẽ được lưu là chưa giao.
+Phần thuốc vẫn chạy khi chưa cấu hình Telegram; các lần gửi sẽ được lưu là chưa giao. Tin nhắc thuốc, quá hạn và cảnh báo té ngã trong HealthGuard chỉ gửi cho chủ nhóm. Người chăm sóc vẫn xác nhận trên web, không cần liên kết bot.
 Để bật Telegram:
 
 1. Tạo bot bằng BotFather.
@@ -113,7 +113,7 @@ Phần thuốc vẫn chạy khi chưa cấu hình Telegram; các lần gửi s�
    `TELEGRAM_WEBHOOK_SECRET` ngẫu nhiên trong `.env`.
 3. Public backend qua HTTPS và đăng ký webhook của Telegram tới:
    `/api/v1/integrations/telegram/webhook` với cùng secret token.
-4. Người dùng đăng nhập rồi gọi `POST /api/v1/auth/telegram-link`.
+4. Chủ nhóm đăng nhập, vào **Kết nối thông báo** để tạo liên kết Telegram (`POST /api/v1/auth/telegram-link`).
 5. Mở `deep_link` trả về và nhấn Start trong Telegram trong vòng 15 phút.
 
 Backend không nhận `chat_id` trực tiếp từ form người dùng. Webhook đã xác thực sẽ liên kết

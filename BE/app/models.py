@@ -64,6 +64,7 @@ class DoseResponseType(str, enum.Enum):
 class NotificationKind(str, enum.Enum):
     REMINDER = "REMINDER"
     ESCALATION = "ESCALATION"
+    DOSE_CONFIRMED = "DOSE_CONFIRMED"
 
 
 class TimestampMixin:
@@ -402,6 +403,18 @@ class NotificationAttempt(Base):
 
     occurrence: Mapped[DoseOccurrence] = relationship()
     recipient: Mapped[User] = relationship()
+
+
+class FallAlert(Base):
+    __tablename__ = "fall_alerts"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    elder_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("elder_profiles.id", ondelete="CASCADE"), index=True)
+    source: Mapped[str] = mapped_column(String(10))
+    telegram_status: Mapped[str] = mapped_column(String(24), default="pending")
+    sent: Mapped[int] = mapped_column(Integer, default=0)
+    failed: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class AuditLog(Base):

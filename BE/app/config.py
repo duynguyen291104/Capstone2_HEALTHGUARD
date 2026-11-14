@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     telegram_bot_token: str | None = None
     telegram_bot_username: str | None = None
     telegram_webhook_secret: str | None = None
+    fallguard_service_key: str | None = Field(default=None, min_length=32)
+    fallguard_camera_code: str | None = None
+    fallguard_service_port: int = Field(default=8001, ge=1024, le=65535)
     tesseract_cmd: str | None = None
     tesseract_data_dir: str | None = None
     ocr_timeout_seconds: int = Field(default=30, ge=5, le=120)
@@ -43,6 +46,11 @@ class Settings(BaseSettings):
         if len(value) < 32:
             raise ValueError("JWT_SECRET must contain at least 32 characters")
         return value
+
+    @field_validator("fallguard_service_key", mode="before")
+    @classmethod
+    def optional_fallguard_key(cls, value: object) -> object:
+        return value or None
 
 
 @lru_cache

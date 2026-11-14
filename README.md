@@ -11,7 +11,7 @@ Repository chung của nhóm HEALTHGUARD. Nhánh này triển khai module quản
 - Thuốc, lịch uống và các lần uống theo ngày.
 - Xác nhận `Đã cho uống` hoặc `Chưa thể cho uống`.
 - Worker nhắc tối đa theo cấu hình và chuyển sang `UNCONFIRMED` khi hết thời gian.
-- Telegram là kênh thông báo tùy chọn; thao tác xác nhận được thực hiện trong web sau khi đăng nhập.
+- Telegram chỉ gửi thông báo cho chủ nhóm; người chăm sóc xem lịch và xác nhận trên web theo phân công.
 - Nhập đơn thuốc từ ảnh bằng OpenCV + Tesseract nội bộ, sửa bản nháp và xác nhận trước khi lưu.
 - Cài đặt tài khoản: sửa thông tin cá nhân và đổi mật khẩu, thu hồi các phiên cũ.
 
@@ -61,6 +61,8 @@ Khi demo không cần Telegram hoặc không có mạng:
 ```
 
 Chế độ này không sửa `.env`; chỉ tắt Telegram trong lượt chạy đó. PostgreSQL vẫn phải hoạt động. Các hướng dẫn tách terminal bên dưới dành cho cài đặt mới hoặc phát triển từng thành phần.
+
+Để chạy cả camera AI và phân tích video trong HealthGuard, dùng `./run-healthguard.cmd --with-ai` sau khi cập nhật database và chuẩn bị môi trường AI. Xem [cách chạy FallGuard và dùng chung bot Telegram](FE/FALLGUARD.md).
 
 Xem [checklist kiểm thử và bảo vệ](docs/DEFENSE_CHECKLIST.md), [hướng dẫn OCR](docs/OCR_REVIEW_GUIDE.md).
 

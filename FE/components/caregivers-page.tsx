@@ -1,6 +1,6 @@
 "use client";
 
-import { BellOff, BellRing, Check, Copy, MailPlus, RefreshCw, ShieldCheck, Trash2, UserRoundCog } from "lucide-react";
+import { Check, Copy, MailPlus, RefreshCw, ShieldCheck, Trash2, UserRoundCog } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Button, EmptyState, ErrorNotice, Field, Modal, PageHeader, SelectField, SkeletonList, SuccessNotice } from "@/components/ui";
 import { careApi, eldersApi, getErrorMessage } from "@/lib/api";
@@ -304,10 +304,6 @@ export function CaregiversPage() {
                   <p>{member.email}</p>
                   <div className="member-badges">
                     <span className="role-badge">Người chăm sóc</span>
-                    <span className={member.telegram_linked ? "telegram-badge telegram-badge--linked" : "telegram-badge"}>
-                      {member.telegram_linked ? <BellRing size={12} /> : <BellOff size={12} />}
-                      {member.telegram_linked ? "Đã nối Telegram" : "Chưa nối Telegram"}
-                    </span>
                   </div>
                 </div>
               </div>

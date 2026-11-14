@@ -9,6 +9,7 @@ import type { TelegramLink } from "@/lib/types";
 
 export function NotificationsPage() {
   const { user, refresh } = useAuth();
+  const isOwner = user?.current_group?.role === "OWNER";
   const [link, setLink] = useState<TelegramLink | null>(null);
   const [error, setError] = useState("");
   const [creating, setCreating] = useState(false);
@@ -46,9 +47,12 @@ export function NotificationsPage() {
       <PageHeader
         eyebrow="Kênh nhận nhắc thuốc"
         title="Kết nối thông báo"
-        description="Mỗi người liên kết tài khoản Telegram của chính mình để nhận đúng lời nhắc và cảnh báo được phân công."
+        description="Lời nhắc thuốc và cảnh báo té ngã qua Telegram chỉ gửi cho chủ nhóm."
       />
 
+      {!isOwner ? (
+        <div className="info-box"><ShieldCheck size={18} aria-hidden="true" /><p>Bạn vẫn xem lịch và xác nhận trên web theo phân công. Người chăm sóc không cần liên kết Telegram.</p></div>
+      ) : <>
       {error ? <ErrorNotice message={error} /> : null}
       {user?.telegram_linked ? (
         <SuccessNotice message="Tài khoản này đã được liên kết với Telegram." />
@@ -59,8 +63,9 @@ export function NotificationsPage() {
         <div className="notification-connect-card__content">
           <h2>Telegram Bot</h2>
           <p>
-            HealthGuard sẽ gửi giờ uống thuốc, tên người được chăm sóc và nút mở web để xác nhận.
-            Mã liên kết chỉ dùng một lần và hết hạn sau 15 phút.
+            Chủ nhóm chỉ cần liên kết một lần với bot HealthGuard để nhận lời nhắc thuốc và cảnh báo té ngã của nhóm.
+            Hệ thống gửi đến cuộc trò chuyện đã liên kết, không dùng số điện thoại trong hồ sơ.
+            Mã chỉ dùng một lần và hết hạn sau 15 phút.
           </p>
           <div className="info-box">
             <ShieldCheck size={18} aria-hidden="true" />
@@ -91,6 +96,7 @@ export function NotificationsPage() {
           ) : null}
         </div>
       </section>
+      </>}
     </>
   );
 }

@@ -90,12 +90,12 @@ export function AccountSettings() {
           <dl><dt>Nhóm chăm sóc</dt><dd>{user?.current_group?.care_group_name ?? "Chưa tham gia nhóm"}</dd><dt>Vai trò của bạn</dt><dd>{user?.current_group?.role === "OWNER" ? "Chủ gia đình" : "Người chăm sóc"}</dd></dl>
           <p className="settings-note">Quyền chăm sóc được quản lý bởi chủ gia đình trong từng nhóm.</p>
         </section>
-        <section className="settings-card">
+        {user?.current_group?.role === "OWNER" && <section className="settings-card">
           <header className="settings-heading"><BellRing size={22} aria-hidden="true" /><div><h2>Thông báo Telegram</h2></div></header>
           <p className="settings-status">{user?.telegram_linked ? "● Đã liên kết Telegram" : "○ Chưa liên kết Telegram"}</p>
-          <p className="settings-note">Nhận lời nhắc uống thuốc và thông báo cần xác nhận theo phân công của bạn.</p>
+          <p className="settings-note">Nhận lời nhắc thuốc và cảnh báo té ngã của nhóm.</p>
           <Link className="button button--secondary" href="/thong-bao">{user?.telegram_linked ? "Quản lý kết nối" : "Liên kết Telegram"}</Link>
-        </section>
+        </section>}
       </aside>
     </div>
   </>;

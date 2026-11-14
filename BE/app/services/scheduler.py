@@ -14,8 +14,8 @@ from app.config import get_settings
 from app.models import (
     AuditLog,
     CareGroupMember,
-    CaregiverAssignment,
     DoseOccurrence,
+    DoseResponse,
     DoseStatus,
     ElderProfile,
     GroupRole,
@@ -106,66 +106,6 @@ async def ensure_occurrences(db: AsyncSession, now: datetime | None = None) -> i
     return max(result.rowcount or 0, 0)
 
 
-async def reminder_recipients(
-    db: AsyncSession, schedule: MedicationSchedule
-) -> list[uuid.UUID]:
-    elder = schedule.medication.elder
-    if schedule.assigned_caregiver_user_id:
-        assigned = await db.scalar(
-            select(CaregiverAssignment.caregiver_user_id)
-            .join(
-                CareGroupMember,
-                CareGroupMember.user_id == CaregiverAssignment.caregiver_user_id,
-            )
-            .join(User, User.id == CaregiverAssignment.caregiver_user_id)
-            .where(
-                CaregiverAssignment.elder_id == elder.id,
-                CaregiverAssignment.caregiver_user_id == schedule.assigned_caregiver_user_id,
-                CaregiverAssignment.can_view_medications.is_(True),
-                CaregiverAssignment.can_confirm_doses.is_(True),
-                CareGroupMember.group_id == elder.group_id,
-                CareGroupMember.role == GroupRole.CAREGIVER,
-                User.is_active.is_(True),
-                User.telegram_chat_id.is_not(None),
-            )
-        )
-        if assigned:
-            return [assigned]
-        return await owner_recipients(db, elder.group_id)
-    recipients = (
-        await db.scalars(
-            select(CaregiverAssignment.caregiver_user_id)
-            .join(
-                CareGroupMember,
-                CareGroupMember.user_id == CaregiverAssignment.caregiver_user_id,
-            )
-            .join(User, User.id == CaregiverAssignment.caregiver_user_id)
-            .where(
-                CaregiverAssignment.elder_id == elder.id,
-                CaregiverAssignment.can_view_medications.is_(True),
-                CaregiverAssignment.can_confirm_doses.is_(True),
-                CareGroupMember.group_id == elder.group_id,
-                CareGroupMember.role == GroupRole.CAREGIVER,
-                User.is_active.is_(True),
-                User.telegram_chat_id.is_not(None),
-            )
-        )
-    ).all()
-    if recipients:
-        return list(dict.fromkeys(recipients))
-    return list(
-        (
-            await db.scalars(
-                select(CareGroupMember.user_id)
-                .join(User, User.id == CareGroupMember.user_id)
-                .where(
-                    CareGroupMember.group_id == elder.group_id,
-                    CareGroupMember.role == GroupRole.OWNER,
-                    User.is_active.is_(True),
-                )
-            )
-        ).all()
-    )
 
 
 async def owner_recipients(db: AsyncSession, group_id: uuid.UUID) -> list[uuid.UUID]:
@@ -271,7 +211,7 @@ async def process_due_occurrences(
         )
         ordinal = max(occurrence.reminder_count + 1, applicable_ordinal)
         ordinal = min(ordinal, len(offsets))
-        recipients = await reminder_recipients(db, schedule)
+        recipients = await owner_recipients(db, schedule.medication.elder.group_id)
         await enqueue_attempts(
             db,
             occurrence.id,
@@ -306,6 +246,19 @@ def notification_text(attempt: NotificationAttempt) -> tuple[str, str]:
     if "." in amount:
         amount = amount.rstrip("0").rstrip(".")
     dose = f"{amount} {medication.dose_unit}"
+    if attempt.kind == NotificationKind.DOSE_CONFIRMED:
+        response = occurrence.response
+        responder = response.responded_by
+        who = responder.full_name if responder else "Người chăm sóc"
+        confirmed_time = as_utc(response.administered_at or response.responded_at).astimezone(ZoneInfo(schedule.timezone))
+        return (
+            "HealthGuard • ĐÃ CHO UỐNG\n"
+            f"Người được chăm sóc: {elder.full_name}\n"
+            f"Thuốc: {medication.name} – {dose}\n"
+            f"Người xác nhận: {who}\n"
+            f"Thời điểm đã cho uống: {confirmed_time:%H:%M %d/%m/%Y}",
+            "Xem kết quả",
+        )
     if attempt.kind == NotificationKind.REMINDER:
         text = (
             "HealthGuard nhắc lịch thuốc\n"
@@ -339,6 +292,9 @@ async def dispatch_notifications(
                 .selectinload(DoseOccurrence.schedule)
                 .selectinload(MedicationSchedule.medication)
                 .selectinload(Medication.elder),
+                selectinload(NotificationAttempt.occurrence)
+                .selectinload(DoseOccurrence.response)
+                .selectinload(DoseResponse.responded_by),
             )
             .where(
                 NotificationAttempt.delivered.is_(False),
@@ -356,12 +312,14 @@ async def dispatch_notifications(
     settings = get_settings()
     for attempt in attempts:
         occurrence = attempt.occurrence
-        expected_status = (
-            DoseStatus.DUE
-            if attempt.kind == NotificationKind.REMINDER
-            else DoseStatus.UNCONFIRMED
-        )
-        if occurrence.status != expected_status:
+        expected_status = {
+            NotificationKind.REMINDER: DoseStatus.DUE,
+            NotificationKind.ESCALATION: DoseStatus.UNCONFIRMED,
+            NotificationKind.DOSE_CONFIRMED: DoseStatus.ADMINISTERED,
+        }[attempt.kind]
+        if occurrence.status != expected_status or (
+            attempt.kind == NotificationKind.DOSE_CONFIRMED and occurrence.response is None
+        ):
             attempt.delivery_attempt_count = 3
             attempt.next_attempt_at = None
             attempt.error = "Notification no longer applies to this dose"
@@ -380,15 +338,13 @@ async def dispatch_notifications(
             attempt.next_attempt_at = None
             attempt.error = "Medication schedule is inactive"
             continue
-        eligible_recipients = (
-            await reminder_recipients(db, schedule)
-            if attempt.kind == NotificationKind.REMINDER
-            else await owner_recipients(db, schedule.medication.elder.group_id)
-        )
+        # Recheck at dispatch so pending reminders created under the old
+        # caregiver routing policy cannot be sent after this change.
+        eligible_recipients = await owner_recipients(db, schedule.medication.elder.group_id)
         if attempt.recipient_user_id not in eligible_recipients:
             attempt.delivery_attempt_count = 3
             attempt.next_attempt_at = None
-            attempt.error = "Recipient no longer has access"
+            attempt.error = "Telegram notifications are only sent to current household owners"
             continue
 
         text, label = notification_text(attempt)

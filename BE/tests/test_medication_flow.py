@@ -10,8 +10,11 @@ from app.models import (
     DoseStatus,
     MedicationSchedule,
     NotificationAttempt,
+    NotificationKind,
+    User,
 )
-from app.services.scheduler import ensure_occurrences, process_due_occurrences
+from app.services.scheduler import dispatch_notifications, ensure_occurrences, process_due_occurrences
+from app.services.telegram import TelegramResult
 from app.routers import medication_schedules
 
 
@@ -243,10 +246,34 @@ async def test_invitation_assignment_schedule_and_idempotent_response(client, db
     async with db_factory() as db:
         count = await db.scalar(select(func.count()).select_from(DoseResponse))
         assert count == 1
-        attempt = await db.scalar(select(NotificationAttempt))
+        attempt = await db.scalar(select(NotificationAttempt).where(NotificationAttempt.kind == NotificationKind.REMINDER))
         assert attempt is not None
         assert attempt.delivery_attempt_count == 3
         assert attempt.next_attempt_at is None
+        receipts = (await db.scalars(select(NotificationAttempt).where(NotificationAttempt.kind == NotificationKind.DOSE_CONFIRMED))).all()
+        assert len(receipts) == 1
+        receipt = receipts[0]
+        assert receipt.recipient_user_id == uuid.UUID(owner.json()["user"]["id"])
+        (await db.get(User, receipt.recipient_user_id)).telegram_chat_id = "12345"
+        (await db.get(User, uuid.UUID(caregiver_id))).telegram_chat_id = "56789"
+        await db.commit()
+
+    from app.services import scheduler
+    delivered = []
+
+    async def fake_send(**kwargs):
+        delivered.append(kwargs)
+        return TelegramResult(True, message_id="fictional-receipt")
+
+    monkeypatch.setattr(scheduler.telegram_client, "send_message", fake_send)
+    async with db_factory() as db:
+        assert await dispatch_notifications(db) == 1
+        assert await dispatch_notifications(db) == 0
+    assert len(delivered) == 1
+    assert delivered[0]["chat_id"] == "12345"
+    assert "ĐÃ CHO UỐNG" in delivered[0]["text"]
+    assert "Co Lan" in delivered[0]["text"]
+    assert "Thuoc A" in delivered[0]["text"]
 
     # Removing access must not erase who performed a historical confirmation.
     await client.post("/api/v1/auth/logout")

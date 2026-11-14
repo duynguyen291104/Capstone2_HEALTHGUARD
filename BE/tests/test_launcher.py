@@ -149,6 +149,26 @@ def test_local_only_disables_telegram_only_in_child_environment(monkeypatch):
     assert all(os.environ[key] == value for key, value in original.items())
 
 
+def test_with_ai_starts_owned_child_without_exposing_service_key_to_frontend(monkeypatch):
+    launched, checked, stopped, _ = fake_main(monkeypatch)
+    seen = []
+    original = launcher.launch_process
+
+    def capture(args, **kwargs):
+        env = kwargs.get("env", {})
+        seen.append({key: env.get(key) for key in ("FALLGUARD_SERVICE_KEY", "FALLGUARD_CAMERA_CODE", "TELEGRAM_BOT_TOKEN")})
+        return original(args, **kwargs)
+
+    monkeypatch.setattr(launcher, "launch_process", capture)
+    assert launcher.main(["--with-ai", "--local-only"]) == 0
+    assert launcher.AI_PYTHON in checked
+    assert len(launched) == 4 and "healthguard_service.py" in launched[2][0][1]
+    assert seen[0]["FALLGUARD_SERVICE_KEY"] == seen[2]["FALLGUARD_SERVICE_KEY"]
+    assert seen[2]["TELEGRAM_BOT_TOKEN"] is None
+    assert seen[3]["FALLGUARD_SERVICE_KEY"] is None and seen[3]["FALLGUARD_CAMERA_CODE"] is None
+    assert stopped == [103, 102, 101, 100]
+
+
 def test_tunnel_or_webhook_failure_is_optional_and_does_not_leak_secrets(monkeypatch, capsys):
     launched, _, stopped, _ = fake_main(monkeypatch, env={"TELEGRAM_BOT_TOKEN": "fictional-secret-token", "TELEGRAM_WEBHOOK_SECRET": "fictional-secret"})
     monkeypatch.setattr(launcher, "wait_for_tunnel", lambda *args: "https://fake.lhr.life")

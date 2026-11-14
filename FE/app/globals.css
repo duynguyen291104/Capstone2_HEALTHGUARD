@@ -498,21 +498,18 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .fall-grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 17px; }
 .fall-card__heading { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 16px; }
 .fall-preview { position: relative; aspect-ratio: 16 / 9; margin-bottom: 12px; overflow: hidden; display: grid; place-items: center; text-align: center; color: #ddf2e9; background: #183a33; border-radius: 10px; }
-.fall-preview video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.fall-preview img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
 .fall-preview p { margin: 7px 0 0; }
 .fall-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-block: 12px; }
 .fall-note { margin: 12px 0 0; color: var(--muted); font-size: 13px; }
-.fall-flow { display: grid; gap: 9px; margin: 0 0 14px; }
-.fall-flow > div { padding: 9px 11px; border-radius: 8px; background: var(--surface-soft); }
-.fall-flow dt { display: flex; align-items: center; gap: 5px; font-weight: 700; }
-.fall-flow dd { margin: 3px 0 0; color: var(--muted); }
-.fall-guide { margin-block: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; }
-.fall-guide summary { cursor: pointer; color: var(--brand-dark); font-weight: 700; }
-.fall-guide summary svg { vertical-align: text-bottom; margin-right: 4px; }
-.fall-guide p { margin: 8px 0 0; color: var(--muted); font-size: 13px; }
-.fall-guide pre { white-space: pre-wrap; overflow-wrap: anywhere; padding: 11px; margin: 10px 0 0; border-radius: 7px; background: var(--surface-soft); font-size: 12px; }
 .fall-dashboard { margin-top: 17px; }
-.fall-iframe { display: block; width: 100%; height: min(900px, 82vh); min-height: 480px; border: 1px solid var(--line); border-radius: 8px; background: white; }
+.fall-status { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-block: 14px; font-weight: 700; }
+.fall-result { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
+.fall-result h3 { font-size: 15px; }
+.fall-result video { display: block; width: 100%; max-height: 360px; margin-block: 10px; border-radius: 8px; background: #183a33; }
+.fall-history { list-style: none; padding: 0; margin-bottom: 0; }
+.fall-history li { display: flex; flex-wrap: wrap; gap: 7px 16px; padding: 10px 0; border-top: 1px solid var(--line); }
+.fall-history time, .fall-history span { color: var(--muted); }
 
 @media (max-width: 980px) {
   .fall-grid { grid-template-columns: 1fr; }

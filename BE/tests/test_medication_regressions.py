@@ -157,7 +157,7 @@ async def test_outbox_drops_old_reminder_retries_then_sends_only_current(client,
         assert await scheduler.dispatch_notifications(db, now + timedelta(minutes=1)) == 0
 
 
-async def test_outbox_checks_removed_recipient_and_falls_back_to_owner(client, db_factory, monkeypatch):
+async def test_outbox_sends_only_to_owner_even_with_assigned_linked_caregiver(client, db_factory, monkeypatch):
     headers, schedule, owner_id = await setup_schedule(client, days=[0])
     sent = []
     async def fake_send(**kwargs):
@@ -165,24 +165,31 @@ async def test_outbox_checks_removed_recipient_and_falls_back_to_owner(client, d
         return TelegramResult(True, message_id="fake-delivery")
     monkeypatch.setattr(scheduler.telegram_client, "send_message", fake_send)
     async with db_factory() as db:
-        caregiver = User(email="removed-caregiver@example.com", full_name="Removed helper", password_hash="unused-test-only", telegram_chat_id="456789")
+        owner = await db.get(User, uuid.UUID(owner_id))
+        owner.telegram_chat_id = "123456"
+        caregiver = User(email="assigned-caregiver@example.com", full_name="Assigned helper", password_hash="unused-test-only", telegram_chat_id="456789")
         db.add(caregiver)
         await db.flush()
         db.add(CareGroupMember(group_id=uuid.UUID(headers["X-Care-Group-ID"]), user_id=caregiver.id, role=GroupRole.CAREGIVER))
-        db.add(CaregiverAssignment(elder_id=uuid.UUID(schedule["elder_id"]), caregiver_user_id=caregiver.id, assigned_by_user_id=uuid.UUID(owner_id)))
+        db.add(CaregiverAssignment(elder_id=uuid.UUID(schedule["elder_id"]), caregiver_user_id=caregiver.id, assigned_by_user_id=uuid.UUID(owner_id), can_view_medications=True, can_confirm_doses=True))
+        saved_schedule = await db.get(MedicationSchedule, uuid.UUID(schedule["id"]))
+        saved_schedule.assigned_caregiver_user_id = caregiver.id
         await db.commit()
-        caregiver_id = caregiver.id
         await scheduler.ensure_occurrences(db, datetime(2026, 10, 5, 0, 50, tzinfo=UTC))
         await scheduler.process_due_occurrences(db, datetime(2026, 10, 5, 1, 1, tzinfo=UTC))
-    removed = await client.delete(f"/api/v1/care-groups/current/members/{caregiver_id}", headers=headers)
-    assert removed.status_code == 204
-    async with db_factory() as db:
+        attempt = await db.scalar(select(NotificationAttempt))
+        assert attempt.recipient_user_id == owner.id
+        # Simulate an undelivered row from before the policy change.
+        legacy = NotificationAttempt(occurrence_id=attempt.occurrence_id, recipient_user_id=caregiver.id,
+                                     kind=NotificationKind.REMINDER, ordinal=1, next_attempt_at=attempt.next_attempt_at)
+        db.add(legacy)
+        await db.commit()
         await scheduler.dispatch_notifications(db, datetime(2026, 10, 5, 1, 2, tzinfo=UTC))
-        assert not sent
+        assert [message["chat_id"] for message in sent] == ["123456"]
+        assert legacy.delivery_attempt_count == 3 and legacy.next_attempt_at is None and not legacy.delivered
         await scheduler.process_due_occurrences(db, datetime(2026, 10, 5, 1, 16, tzinfo=UTC))
         await scheduler.dispatch_notifications(db, datetime(2026, 10, 5, 1, 16, tzinfo=UTC))
-        assert len(sent) == 1
-        assert sent[0]["chat_id"] is None  # Owner is fallback; production records unlinked delivery failure.
+        assert [message["chat_id"] for message in sent] == ["123456", "123456"]
 
 
 async def test_outbox_failure_retries_at_most_three_times(client, db_factory, monkeypatch):
